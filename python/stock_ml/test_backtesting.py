@@ -1,7 +1,7 @@
 import unittest
 import numpy as np
 from backtesting import run_backtest, calibration_from_backtest, MODEL_FAMILIES, _family_predict
-from realtime_model import train_range, RIDGE_ALPHAS, COMBINATIONS
+from realtime_model import (train_range, RIDGE_ALPHAS, COMBINATIONS, DEFAULT_MIN_EXPECTED_NET_RETURN, required_gross_return)
 
 class BacktestTests(unittest.TestCase):
     def test_model_family_matrix_includes_baselines_trees_and_ensemble(self):
@@ -28,6 +28,13 @@ class BacktestTests(unittest.TestCase):
     def test_rejects_invalid_costs(self):
         with self.assertRaises(ValueError):
             run_backtest(np.arange(1000),np.ones(1000),window_minutes=60,horizon_minutes=60,fee_bps=999)
+
+    def test_backtest_uses_same_default_net_threshold_and_round_trip_costs(self):
+        self.assertAlmostEqual(required_gross_return(), .004)
+        self.assertEqual(DEFAULT_MIN_EXPECTED_NET_RETURN, .001)
+        with self.assertRaises(ValueError):
+            run_backtest(np.arange(1000),np.ones(1000),window_minutes=60,
+                         horizon_minutes=60,minimum_net_return=-.001)
 
     def test_calibration_needs_minimum_samples(self):
         result=calibration_from_backtest([dict(raw_return=.01,actual_return=.02,origin_minute=i) for i in range(10)])
