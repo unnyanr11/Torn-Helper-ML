@@ -3,8 +3,22 @@ import json, os, sys, uuid, traceback
 import psycopg
 import numpy as np
 from psycopg.types.json import Jsonb
-from backtesting import run_backtest, calibration_from_backtest, MODEL_FAMILIES
+from backtesting import run_backtest, calibration_from_backtest
 from realtime_model import COMBINATIONS
+
+# Compact screening set for the 15-day evaluation: representative short windows
+# and horizons, plus three complementary model families. Ridge remains the only
+# family eligible for live calibration promotion.
+BACKTEST_WINDOWS = (60, 360, 1440, 4320)
+BACKTEST_HORIZONS = (60, 360, 1440)
+BACKTEST_STYLES = ('short',)
+BACKTEST_MODEL_FAMILIES = ('ridge', 'elastic_net', 'hist_gradient_boosting')
+BACKTEST_COMBINATIONS = tuple(
+    (style, window, horizon)
+    for style in BACKTEST_STYLES
+    for window in BACKTEST_WINDOWS
+    for horizon in BACKTEST_HORIZONS
+)
 
 
 def validate_and_promote(conn, stock, run_id, candidate, *, style, window_minutes, horizon_minutes):
@@ -68,18 +82,19 @@ def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds):
             # Reserve the most recent evaluation_days for out-of-sample forecasts.
             # Each fold trains only on observations strictly before its own origin.
             evaluation_start=int(times[-1]-evaluation_days*1440)
-            # Backtest every configured live-model window/horizon/style combination.
-            # The canonical model registry currently defines 104 combinations.
-            combinations=COMBINATIONS
+            # Screen a compact, representative set. Long (7-28 day) horizons
+            # cannot mature reliably inside a 15-day evaluation period, so they
+            # are intentionally excluded from this run.
+            combinations=BACKTEST_COMBINATIONS
             for style,window_minutes,horizon_minutes in combinations:
-              for model_family in MODEL_FAMILIES:
+              for model_family in BACKTEST_MODEL_FAMILIES:
                         run_id=uuid.uuid4()
                         config=dict(style=style,window_minutes=window_minutes,horizon_minutes=horizon_minutes,
                             fee_bps=10,slippage_bps=5,initial_capital=10000,max_folds=max_folds,
                             lookback_days=lookback_days,evaluation_days=evaluation_days,
                             evaluation_start_minute=evaluation_start,
                             execution='decision-close to exact-horizon close',
-                            combination_count=len(combinations),model_family=model_family)
+                            combination_count=len(combinations),model_family_count=len(BACKTEST_MODEL_FAMILIES),model_family=model_family)
                         conn.execute("insert into stock_engine.ml_backtest_runs(run_id,stock_id,status,config,source_commit) values(%s,%s,'running',%s,%s)",
                             (run_id,stock,Jsonb(config),os.getenv('GITHUB_SHA')))
                         result=run_backtest(times,prices,window_minutes=window_minutes,
