@@ -6,18 +6,18 @@ from psycopg.types.json import Jsonb
 from backtesting import run_backtest, calibration_from_backtest
 
 
-def validate_and_promote(conn, stock, run_id, candidate):
+def validate_and_promote(conn, stock, run_id, candidate, *, style, window_minutes, horizon_minutes):
     # Never promote on backtest performance alone. Use later live forward outcomes.
     if not candidate.get('active'):
         return dict(promoted=False, reason=candidate.get('reason', 'backtest_candidate_rejected'))
     rows = conn.execute("""
         select raw_return,predicted_return,actual_return
         from stock_engine.ml_v2_checks
-        where stock_id=%s and style='short' and analysis_minutes=10080
-          and horizon_minutes=1440 and checked_at is not null
+        where stock_id=%s and style=%s and analysis_minutes=%s
+          and horizon_minutes=%s and checked_at is not null
           and target_at<=now() and target_at>=now()-interval '90 days'
         order by target_at desc limit 120
-    """, (stock,)).fetchall()
+    """, (stock,style,window_minutes,horizon_minutes)).fetchall()
     if len(rows) < 30:
         return dict(promoted=False, reason='insufficient_live_forward_samples', samples=len(rows))
     raw=np.asarray([float(r[0]) for r in rows])
@@ -38,10 +38,10 @@ def validate_and_promote(conn, stock, run_id, candidate):
     conn.execute("""
         insert into stock_engine.ml_v2_calibration
         (stock_id,style,analysis_minutes,horizon_minutes,payload)
-        values(%s,'short',10080,1440,%s)
+        values(%s,%s,%s,%s,%s)
         on conflict(stock_id,style,analysis_minutes,horizon_minutes)
         do update set payload=excluded.payload,calibrated_at=now()
-    """, (stock, Jsonb(payload)))
+    """, (stock,style,window_minutes,horizon_minutes,Jsonb(payload)))
     conn.execute("""
         update stock_engine.ml_backtest_calibration_candidates
         set promoted=true,promotion_reason=%s where run_id=%s
@@ -64,34 +64,45 @@ def process(project,dsn,stock_ids,lookback_days,max_folds):
                 group by 1 order by 1""",(stock,lookback_days)).fetchall()
             if len(rows)<1000: print(f"stock {stock}: insufficient raw observations"); continue
             times=[int(r[0]) for r in rows]; prices=[float(r[1]) for r in rows]
-            # Backtest a conservative 24-hour model with 7-day feature window;
-            # other combinations can be added once history/cost profiles are known.
-            run_id=uuid.uuid4()
-            config=dict(style='short',window_minutes=10080,horizon_minutes=1440,
-                fee_bps=10,slippage_bps=5,initial_capital=10000,max_folds=max_folds,
-                lookback_days=lookback_days,execution='decision-close to exact-horizon close')
-            conn.execute("insert into stock_engine.ml_backtest_runs(run_id,stock_id,status,config,source_commit) values(%s,%s,'running',%s,%s)",
-                (run_id,stock,Jsonb(config),os.getenv('GITHUB_SHA')))
-            result=run_backtest(times,prices,window_minutes=config['window_minutes'],
-                horizon_minutes=config['horizon_minutes'],style=config['style'],
-                fee_bps=config['fee_bps'],slippage_bps=config['slippage_bps'],
-                initial_capital=config['initial_capital'],max_folds=max_folds)
-            with conn.transaction():
-                conn.execute("update stock_engine.ml_backtest_runs set status=%s,metrics=%s where run_id=%s",
-                    (result['status'],Jsonb(result['metrics']),run_id))
-                conn.executemany("""insert into stock_engine.ml_backtest_predictions
-                    (run_id,origin_at,target_at,origin_price,actual_price,raw_return,predicted_return,actual_return,signal,model_id)
-                    values(%s,to_timestamp(%s*60),to_timestamp(%s*60),%s,%s,%s,%s,%s,%s,%s)""",
-                    [(run_id,p['origin_minute'],p['target_minute'],p['origin_price'],p['actual_price'],
-                      p['raw_return'],p['predicted_return'],p['actual_return'],p['signal'],p['model_id']) for p in result['predictions']])
-                conn.executemany("""insert into stock_engine.ml_backtest_trades
-                    (run_id,origin_at,exit_at,side,entry_price,exit_price,gross_return,net_return,capital_before,capital_after)
-                    values(%s,to_timestamp(%s*60),to_timestamp(%s*60),%s,%s,%s,%s,%s,%s,%s)""",
-                    [(run_id,t['origin_minute'],t['exit_minute'],t['side'],t['entry_price'],t['exit_price'],
-                      t['gross_return'],t['net_return'],t['capital_before'],t['capital_after']) for t in result['trades']])
-                candidate=calibration_from_backtest(result['predictions'])
-                conn.execute("""insert into stock_engine.ml_backtest_calibration_candidates(run_id,candidate)
-                    values(%s,%s)""",(run_id,Jsonb(candidate)))
+            # 3 feature windows x 4 forecast horizons x 2 styles = 24 combinations.
+            windows=(1440,4320,10080)  # 1d, 3d, 7d
+            horizons=(60,180,360,1440) # 1h, 3h, 6h, 24h
+            styles=('short','long')
+            for window_minutes in windows:
+                for horizon_minutes in horizons:
+                    for style in styles:
+                        run_id=uuid.uuid4()
+                        config=dict(style=style,window_minutes=window_minutes,horizon_minutes=horizon_minutes,
+                            fee_bps=10,slippage_bps=5,initial_capital=10000,max_folds=max_folds,
+                            lookback_days=lookback_days,execution='decision-close to exact-horizon close',
+                            combination_count=len(windows)*len(horizons)*len(styles))
+                        conn.execute("insert into stock_engine.ml_backtest_runs(run_id,stock_id,status,config,source_commit) values(%s,%s,'running',%s,%s)",
+                            (run_id,stock,Jsonb(config),os.getenv('GITHUB_SHA')))
+                        result=run_backtest(times,prices,window_minutes=window_minutes,
+                            horizon_minutes=horizon_minutes,style=style,fee_bps=config['fee_bps'],
+                            slippage_bps=config['slippage_bps'],initial_capital=config['initial_capital'],
+                            max_folds=max_folds)
+                        with conn.transaction():
+                            conn.execute("update stock_engine.ml_backtest_runs set status=%s,metrics=%s where run_id=%s",
+                                (result['status'],Jsonb(result['metrics']),run_id))
+                            conn.executemany("""insert into stock_engine.ml_backtest_predictions
+                                (run_id,origin_at,target_at,origin_price,actual_price,raw_return,predicted_return,actual_return,signal,model_id)
+                                values(%s,to_timestamp(%s*60),to_timestamp(%s*60),%s,%s,%s,%s,%s,%s,%s)""",
+                                [(run_id,p['origin_minute'],p['target_minute'],p['origin_price'],p['actual_price'],
+                                  p['raw_return'],p['predicted_return'],p['actual_return'],p['signal'],p['model_id']) for p in result['predictions']])
+                            conn.executemany("""insert into stock_engine.ml_backtest_trades
+                                (run_id,origin_at,exit_at,side,entry_price,exit_price,gross_return,net_return,capital_before,capital_after)
+                                values(%s,to_timestamp(%s*60),to_timestamp(%s*60),%s,%s,%s,%s,%s,%s,%s)""",
+                                [(run_id,t['origin_minute'],t['exit_minute'],t['side'],t['entry_price'],t['exit_price'],
+                                  t['gross_return'],t['net_return'],t['capital_before'],t['capital_after']) for t in result['trades']])
+                            candidate=calibration_from_backtest(result['predictions'])
+                            conn.execute("""insert into stock_engine.ml_backtest_calibration_candidates(run_id,candidate)
+                                values(%s,%s)""",(run_id,Jsonb(candidate)))
+                        promotion=validate_and_promote(conn,stock,run_id,candidate,style=style,
+                            window_minutes=window_minutes,horizon_minutes=horizon_minutes)
+                        print(json.dumps(dict(stock_id=stock,run_id=str(run_id),config=config,
+                            status=result['status'],metrics=result['metrics'],calibration_candidate=candidate,
+                            calibration_promotion=promotion)))
             promotion=validate_and_promote(conn,stock,run_id,candidate)
             print(json.dumps(dict(stock_id=stock,run_id=str(run_id),status=result['status'],metrics=result['metrics'],calibration_candidate=candidate,calibration_promotion=promotion)))
 def main():
