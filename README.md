@@ -10,11 +10,10 @@ and store results/calibration in the assigned Supabase stock shards.
 - The model performs nested chronological Ridge hyperparameter selection over
   alpha values 1, 10, 100 and 1000. The selection window is separate from the
   final untouched validation window, with a forecast-horizon purge between them.
-- A GitHub Actions job runs every two hours against actual stored prices. Each
-  stock is evaluated across 24 combinations: three feature windows (1, 3 and 7
-  days), four forecast horizons (1, 3, 6 and 24 hours), and both short/long
-  model styles. Each combination uses up to 12 non-overlapping evaluation folds
-  per stock to keep the two-hour workload bounded.
+- A GitHub Actions job runs every two hours against actual stored prices. Each stock is evaluated across all 104 configurations defined by the live
+  model registry: 12 short-style windows x 6 short horizons, plus 8 long-style
+  windows x 4 long horizons. Each configuration uses up to 3 non-overlapping
+  evaluation folds per stock to keep the two-hour workload bounded.
 - Backtest results, prediction outcomes, trade assumptions and calibration
   candidates are written to private `stock_engine` tables.
 - A calibration candidate is not promoted based on backtest results alone. It
@@ -39,7 +38,7 @@ and store results/calibration in the assigned Supabase stock shards.
    daily schedule.
 
 The scheduled workflow can be manually dispatched for a selected set of stock
-IDs or a 30-180 day lookback. The default workload is capped at 12 folds per
+IDs or a 30-180 day lookback. The default workload is capped at 3 folds per
 configuration to keep the 24-combination run bounded.
 
 ## Backtesting assumptions and limitations
@@ -54,11 +53,11 @@ candidate rather than a forced calibration.
 Backtesting is research, not proof of profitability. The backtest calibration
 candidate is fitted on a chronological subset and checked on a later holdout;
 promotion additionally requires independent matured live forward outcomes.
-The current matrix varies feature-window length, forecast horizon and short/long
-model style. It still uses the Ridge model family; it does not yet compare
-fundamentally different algorithm families such as random forests or gradient
-boosting. A broader family comparison should be added only with equivalent
-leakage-safe selection and holdout validation.
+The matrix covers every configured feature-window/horizon/style combination,
+but still uses the Ridge model family with nested alpha selection; it does not
+yet compare fundamentally different algorithm families such as random forests
+or gradient boosting. A broader family comparison should be added only with
+equivalent leakage-safe selection and holdout validation.
 
 ## Tests
 
