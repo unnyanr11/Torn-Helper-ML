@@ -121,7 +121,7 @@ def process(project,dsn,force_train=False,force_calibrate=False):
                 if model and model.get('status')=='ready' and origin-model.get('trained_through',0)>60:
                     model=dict(status='training',reason='Waiting for a recently trained Python model')
                 result=make_result(model,corrections.get(key),x,valid)
-                if result['status'] != 'ready' and valid:
+                if result['status'] != 'ready':
                     result=baseline_forecast(times,values,origin,window,horizon)
                 result.update(stock_id=stock,style=style,analysis_minutes=window,horizon_minutes=horizon,
                     origin_minute=origin,origin_price=float(values[-1]),computed_at=time.time(),
