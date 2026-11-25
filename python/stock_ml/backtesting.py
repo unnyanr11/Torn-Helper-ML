@@ -5,7 +5,7 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import Ridge, ElasticNet
 from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor, HistGradientBoostingRegressor
-from realtime_model import exact, feature_matrix, prepare_series, validate_series
+from realtime_model import exact, feature_matrix, prepare_series, validate_series, train_range, make_result
 
 MODEL_FAMILIES=('ridge','elastic_net','random_forest','extra_trees','hist_gradient_boosting','ensemble')
 BASE_FAMILIES=MODEL_FAMILIES[:-1]
@@ -72,23 +72,31 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
         prepared=prepare_series(train_t,train_p)
         x,valid=feature_matrix(train_t,train_p,[origin],window_minutes,prepared)
         if not bool(valid[0]): continue
-        stride_origins=train_t[(train_t%stride)==0]
-        features,feature_ok=feature_matrix(train_t,train_p,stride_origins,window_minutes,prepared)
-        targets=exact(train_t,train_p,stride_origins+horizon_minutes)
-        matured=feature_ok & np.isfinite(targets)
-        origins=stride_origins[matured]; features=features[matured]
-        if len(origins)<240: continue
-        y=targets[matured]/exact(train_t,train_p,origins)-1.0
-        boundary=origins[int(len(origins)*.75)]
-        fit_mask=origins+horizon_minutes<boundary
-        val_mask=origins>=boundary
-        if fit_mask.sum()<100 or val_mask.sum()<30: continue
-        val_y=y[val_mask]
-        val_pred=_family_predict(model_family,features[fit_mask],y[fit_mask],features[val_mask])
-        validation_mae=float(np.mean(np.abs(val_y-val_pred)))
-        baseline=float(np.mean(np.abs(val_y)))
-        approved=bool(baseline>0 and validation_mae<baseline*.98)
-        final_prediction=float(_family_predict(model_family,features,y,x)[0])
+        if model_family=='ridge':
+            fitted=train_range(train_t,train_p,style,window_minutes,[horizon_minutes],prepared).get(horizon_minutes,{})
+            if fitted.get('status')!='ready': continue
+            result=make_result(fitted,None,x[0],True)
+            validation_mae=float(fitted['metrics']['mae'])
+            approved=bool(fitted['metrics']['approved'])
+            final_prediction=float(result.get('predicted_return',0.0))
+        else:
+            stride_origins=train_t[(train_t%stride)==0]
+            features,feature_ok=feature_matrix(train_t,train_p,stride_origins,window_minutes,prepared)
+            targets=exact(train_t,train_p,stride_origins+horizon_minutes)
+            matured=feature_ok & np.isfinite(targets)
+            origins=stride_origins[matured]; features=features[matured]
+            if len(origins)<240: continue
+            y=targets[matured]/exact(train_t,train_p,origins)-1.0
+            boundary=origins[int(len(origins)*.75)]
+            fit_mask=origins+horizon_minutes<boundary
+            val_mask=origins>=boundary
+            if fit_mask.sum()<100 or val_mask.sum()<30: continue
+            val_y=y[val_mask]
+            val_pred=_family_predict(model_family,features[fit_mask],y[fit_mask],features[val_mask])
+            validation_mae=float(np.mean(np.abs(val_y-val_pred)))
+            baseline=float(np.mean(np.abs(val_y)))
+            approved=bool(baseline>0 and validation_mae<baseline*.98)
+            final_prediction=float(_family_predict(model_family,features,y,x)[0])
         future=float(exact(times,prices,[origin+horizon_minutes])[0])
         current=float(exact(times,prices,[origin])[0])
         if not math.isfinite(future) or not math.isfinite(current): continue
