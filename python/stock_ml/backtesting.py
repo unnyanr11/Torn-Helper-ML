@@ -77,6 +77,7 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
             if fitted.get('status')!='ready': continue
             result=make_result(fitted,None,x[0],True)
             validation_mae=float(fitted['metrics']['mae'])
+            baseline=float(fitted['metrics']['baseline_mae'])
             approved=bool(fitted['metrics']['approved'])
             final_prediction=float(result.get('predicted_return',0.0))
         else:
