@@ -82,20 +82,29 @@ The prediction worker is not a guarantee of profitability. Forecasts are
 estimates, not financial advice, and actual execution prices, spreads and
 liquidity may differ from stored closes.
 
-## Backtesting (automatic every four hours)
+## Backtesting (automatic six-hour retrigger loop)
 
-`.github/workflows/backtest.yml` runs the complete backtest matrix every
-three hours (UTC), and can also be started manually. A unit-test job runs once
-before the stock matrix begins. The matrix contains one independent job for
-each of the 35 stocks, with up to eight stock jobs running concurrently and
-fail-fast disabled so one stock's failure does not cancel the others.
+`.github/workflows/backtest.yml` starts a separate retrigger job alongside the
+backtest matrix. The timer waits 5 hours 55 minutes from the retrigger job's
+start, then uses the GitHub Actions API to dispatch the next full backtest
+workflow on `main`. The workflow is started once manually; the retrigger loop
+then continues automatically. GitHub runner queueing and dispatch latency mean
+the interval is best-effort, not an exact six-hour start-to-start guarantee.
+The workflow no longer uses a cron schedule.
+
+The workflow requires the Actions write permission for its dispatch job. A
+unit-test job runs once before the stock matrix begins. The matrix contains one
+independent job for each of the 35 stocks, with up to eight stock jobs running
+concurrently and fail-fast disabled so one stock's failure does not cancel the
+others.
 
 Each stock tests all 104 live registry window/horizon combinations (12 short
 windows x 6 short horizons, plus 8 long windows x 4 long horizons) across all
 six supported backtest model families. The scheduled defaults use 180 days of
-history, all eligible out-of-sample history currently available in each shard (up to the 180-day retention limit), and up to 120 walk-forward
-folds per configuration. Long horizons may still be skipped by the evaluator
-when the available history cannot support a valid matured sample.
+history, all eligible out-of-sample history currently available in each shard
+(up to the 180-day retention limit), and up to 120 walk-forward folds per
+configuration. Long horizons may still be skipped by the evaluator when the
+available history cannot support a valid matured sample.
 
 Backtest predictions, trades, metrics and calibration candidates are stored
 in the separate `stock_engine.ml_backtest_*` tables. Ridge-compatible
@@ -105,14 +114,15 @@ calibration. Other model families are comparison-only and are not wired into
 the live predictor. No RLS policies are changed.
 
 Each stock job has a 165-minute timeout. The workflow allows up to eight
-concurrent stock jobs to limit database connection pressure. If a run takes
-longer than the three-hour schedule interval, GitHub's workflow-level
-concurrency setting queues the next run rather than running two full batches
-at once.
+concurrent stock jobs to limit database connection pressure. Workflow-level
+concurrency prevents overlapping full batches; a dispatched run may wait for
+the previous batch to finish.
 
-Before running backtests, install `python/stock_ml/backtest_setup.sql` in each
-shard after the live prediction schema is present. This creates isolated
-backtest tables and does not alter RLS policies.
+The report job runs after the stock matrix and stores model rankings in
+`stock_engine.ml_backtest_reports`. Before running backtests, install
+`python/stock_ml/backtest_setup.sql` in each shard after the live prediction
+schema is present. This creates isolated backtest tables and does not alter
+existing RLS policies.
 
 ## Backtest performance reporting
 
