@@ -22,8 +22,7 @@ on:
         required: true
         default: "20"
         type: string
-  schedule:
-    - cron: "23 */2 * * *"
+  # Backtests are manual-only until the prediction pipeline is stable.
 
 permissions:
   contents: read
