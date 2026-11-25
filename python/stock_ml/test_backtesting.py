@@ -16,8 +16,14 @@ class BacktestTests(unittest.TestCase):
             self.assertTrue(np.all(np.isfinite(prediction)))
 
     def test_backtest_matrix_covers_all_registered_live_combinations(self):
-        self.assertEqual(len(COMBINATIONS),104)
-        self.assertEqual(len(set(COMBINATIONS)),104)
+        self.assertEqual(len(COMBINATIONS),72)
+        self.assertEqual(len(set(COMBINATIONS)),72)
+        self.assertEqual({style for style, _, _ in COMBINATIONS}, {'short'})
+
+    def test_backtest_rejects_long_term_style(self):
+        with self.assertRaisesRegex(ValueError, 'Invalid model style'):
+            run_backtest(np.arange(1000), np.ones(1000), window_minutes=60,
+                         horizon_minutes=60, style='long')
 
     def test_rejects_invalid_costs(self):
         with self.assertRaises(ValueError):
