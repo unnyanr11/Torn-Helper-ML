@@ -10,8 +10,8 @@ from pathlib import Path
 import sys
 import time
 import numpy as np
-from realtime_model import (COMBINATIONS,SHORT_RANGES,LONG_RANGES,SHORT_HORIZONS,
-    LONG_HORIZONS,prepare_series,feature_matrix,train_range,make_result,baseline_forecast,calibrate,validate_series)
+from realtime_model import (COMBINATIONS,SHORT_RANGES,SHORT_HORIZONS,
+    prepare_series,feature_matrix,train_range,make_result,baseline_forecast,calibrate,validate_series)
 from diagnostics import safe_error,project_connection,ConnectionStageError
 from realtime_store import connect,load_payloads,save_payloads,save_results,read_prices,check_outcomes,health
 
@@ -98,7 +98,7 @@ def process(project,dsn,force_train=False,force_calibrate=False):
                 continue
             prepared=prepare_series(times,values)
             if train_due:
-                for style,ranges,horizons in [('short',SHORT_RANGES,SHORT_HORIZONS),('long',LONG_RANGES,LONG_HORIZONS)]:
+                for style,ranges,horizons in [('short',SHORT_RANGES,SHORT_HORIZONS)]:
                     for window in ranges:
                         fitted=train_range(times,values,style,window,horizons,prepared)
                         for model in fitted.values():
