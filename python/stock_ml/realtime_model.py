@@ -1,9 +1,9 @@
-"""Vectorized, causal minute features and purged direct-return Ridge models."""
+"""Vectorized causal features and nested walk-forward Ridge model selection."""
 import hashlib
 import json
 import numpy as np
 
-VERSION = 'minute-ridge-v2'
+VERSION = 'minute-ridge-v3'
 SHORT_RANGES = (15, 30, 60, 120, 180, 360, 720, 1080, 1440, 4320, 10080, 43200)
 LONG_RANGES = tuple(d * 1440 for d in (7, 15, 30, 60, 90, 120, 150, 180))
 SHORT_HORIZONS = tuple(h * 60 for h in (1, 3, 6, 12, 18, 24))
@@ -11,6 +11,7 @@ LONG_HORIZONS = tuple(h * 60 for h in (168, 336, 504, 672))
 COMBINATIONS = tuple((style, r, h) for style, ranges, horizons in
                      (('short', SHORT_RANGES, SHORT_HORIZONS),
                       ('long', LONG_RANGES, LONG_HORIZONS)) for r in ranges for h in horizons)
+RIDGE_ALPHAS = (1.0, 10.0, 100.0, 1000.0)
 
 def validate_series(times, prices):
     times=np.asarray(times,dtype=np.int64); prices=np.asarray(prices,dtype=np.float64)
@@ -42,6 +43,7 @@ def infer(parameters,x):
     return ((np.asarray(x)-np.asarray(parameters['mean']))/np.asarray(parameters['scale']))@np.asarray(parameters['coef'])+parameters['intercept']
 
 def train_range(times,prices,style,window,horizons,prepared=None):
+    """Nested chronological selection, purged by forecast horizon; final holdout is untouched."""
     from sklearn.linear_model import Ridge
     from sklearn.preprocessing import StandardScaler
     times,prices=validate_series(times,prices); stride=15 if style=='short' else 60; origins=times[times%stride==0]
@@ -49,14 +51,38 @@ def train_range(times,prices,style,window,horizons,prepared=None):
     x,complete=feature_matrix(times,prices,origins,window,prepared); origins,x=origins[complete],x[complete]; result={}
     for horizon in horizons:
         future=exact(times,prices,origins+horizon); matured=np.isfinite(future); t,design=origins[matured],x[matured]; y=future[matured]/exact(times,prices,t)-1
-        if len(t)<200: result[horizon]={'status':'insufficient_history','reason':'Need 200 matured historical examples'}; continue
-        boundary=t[int(len(t)*.75)]; train,test=t+horizon<boundary,t>=boundary
-        if train.sum()<100 or test.sum()<50: result[horizon]={'status':'insufficient_history','reason':'Not enough history after horizon purge'}; continue
-        scaler=StandardScaler().fit(design[train]); model=Ridge(alpha=100.).fit(scaler.transform(design[train]),y[train]); predicted=model.predict(scaler.transform(design[test])); error=y[test]-predicted
-        mae,baseline=float(np.mean(abs(error))),float(np.mean(abs(y[test]))); q90=float(np.quantile(abs(error),.9))
-        metrics=dict(mae=mae,baseline_mae=baseline,error_q90=q90,training_rows=int(train.sum()),validation_rows=int(test.sum()),last_training_target=int((t[train]+horizon).max()),first_validation_origin=int(boundary),approved=bool(baseline>0 and mae<baseline*.98))
-        scaler=StandardScaler().fit(design); model=Ridge(alpha=100.).fit(scaler.transform(design),y); parameters=dict(mean=scaler.mean_.tolist(),scale=scaler.scale_.tolist(),coef=model.coef_.tolist(),intercept=float(model.intercept_))
-        model_id=hashlib.sha256(json.dumps(parameters,sort_keys=True).encode()).hexdigest()[:20]
+        if len(t)<240:
+            result[horizon]={'status':'insufficient_history','reason':'Need 240 matured examples for nested validation'}; continue
+        boundary_select=t[int(len(t)*.60)]; boundary_test=t[int(len(t)*.75)]
+        train=t+horizon<boundary_select
+        select=(t>=boundary_select)&(t+horizon<boundary_test)
+        test=t>=boundary_test
+        if train.sum()<100 or select.sum()<30 or test.sum()<50:
+            result[horizon]={'status':'insufficient_history','reason':'Not enough rows after nested horizon purges'}; continue
+        scaler=StandardScaler().fit(design[train]); z_train=scaler.transform(design[train]); z_select=scaler.transform(design[select])
+        alpha_scores=[]
+        for alpha in RIDGE_ALPHAS:
+            candidate=Ridge(alpha=alpha).fit(z_train,y[train])
+            score=float(np.mean(np.abs(y[select]-candidate.predict(z_select))))
+            alpha_scores.append((score,alpha))
+        selected_alpha=min(alpha_scores,key=lambda item:(item[0],item[1]))[1]
+        # Final untouched test evaluates the selected alpha, never selects it.
+        fit_before_test=t+horizon<boundary_test
+        final_scaler=StandardScaler().fit(design[fit_before_test])
+        final_model=Ridge(alpha=selected_alpha).fit(final_scaler.transform(design[fit_before_test]),y[fit_before_test])
+        test_prediction=final_model.predict(final_scaler.transform(design[test]))
+        error=y[test]-test_prediction
+        mae,baseline=float(np.mean(abs(error))),float(np.mean(abs(y[test])))
+        q90=float(np.quantile(abs(error),.9))
+        metrics=dict(mae=mae,baseline_mae=baseline,error_q90=q90,
+            training_rows=int(train.sum()),selection_rows=int(select.sum()),validation_rows=int(test.sum()),
+            selected_alpha=selected_alpha,alpha_selection_mae=float(min(alpha_scores)[0]),
+            last_training_target=int((t[fit_before_test]+horizon).max()),
+            first_validation_origin=int(boundary_test),approved=bool(baseline>0 and mae<baseline*.98))
+        # Refit selected model on every matured example for live inference.
+        scaler=StandardScaler().fit(design); model=Ridge(alpha=selected_alpha).fit(scaler.transform(design),y)
+        parameters=dict(mean=scaler.mean_.tolist(),scale=scaler.scale_.tolist(),coef=model.coef_.tolist(),intercept=float(model.intercept_))
+        model_id=hashlib.sha256(json.dumps(dict(parameters=parameters,alpha=selected_alpha),sort_keys=True).encode()).hexdigest()[:20]
         result[horizon]=dict(status='ready',parameters=parameters,metrics=metrics,model_id=model_id,trained_through=int(times[-1]))
     return result
 
