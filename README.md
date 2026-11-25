@@ -82,10 +82,10 @@ is isolated in `stock_engine`; this repository does not change RLS policies.
 
 ## Trading thresholds and costs
 
-The short-term live signal and backtest default minimum expected net return is **0.1%** after estimated trading costs. The default live cost estimate is 0.1%; the backtest computes its round-trip cost from its configured fee and slippage assumptions. There is no maximum expected-profit threshold. Configure the worker/backtest defaults with GitHub Actions repository Variables:
+The short-term live signal and backtest default minimum expected net return is **0.1%** after estimated trading costs. The default live round-trip cost estimate is 0.30%, matching the backtest defaults (0.10% fee plus 0.05% slippage on each side). There is no maximum expected-profit threshold. Configure the worker/backtest defaults with GitHub Actions repository Variables:
 
 - `SHORT_MIN_EXPECTED_NET_RETURN` (fraction; default `0.001` = 0.1%)
-- `SHORT_ESTIMATED_TRADING_COST` (fraction; default `0.001` = 0.1%)
+- `SHORT_ESTIMATED_TRADING_COST` (fraction; default `0.003` = 0.30% round-trip)
 
 The backtest's fee/slippage inputs remain separate and are deducted from realized returns; its signal hurdle is round-trip cost plus the minimum net return. The main app's per-user saved preference remains an app-level setting; these worker variables configure the shared model-worker default, not an individual user's preference.
 
