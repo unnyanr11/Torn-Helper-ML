@@ -1,68 +1,104 @@
 # Torn-Helper ML
 
-Backend-only machine-learning and research worker for Torn-Helper. There is no
-website backtesting interface: scheduled jobs evaluate the models in the background
-and store results/calibration in the assigned Supabase stock shards.
+Backend-only prediction and model-research worker for Torn-Helper. It publishes
+Python-generated forecasts to the assigned Supabase stock shards. There is no
+website backtesting interface.
 
-## Autonomous learning cycle
+## Five-minute prediction workflow
 
-- Live prediction workers continue to train and publish forecasts on their existing cadence.
-- The model performs nested chronological Ridge hyperparameter selection over
-  alpha values 1, 10, 100 and 1000. The selection window is separate from the
-  final untouched validation window, with a forecast-horizon purge between them.
-- A GitHub Actions job runs every two hours against actual stored prices. Each stock is evaluated across all 104 configurations defined by the live
-  model registry: 12 short-style windows x 6 short horizons, plus 8 long-style
-  windows x 4 long horizons. Each configuration is compared across six families: the existing Ridge
-  baseline, Elastic Net, Random Forest, Extra Trees, Histogram Gradient
-  Boosting, and a median ensemble. The default is two non-overlapping
-  evaluation folds per family/configuration; the scheduled job has a six-hour
-  ceiling, so actual coverage and completion must be confirmed from run logs.
-- Backtest results, prediction outcomes, trade assumptions and calibration
-  candidates are written to private `stock_engine` tables.
-- A calibration candidate is not promoted based on backtest results alone. It
-  must improve MAE by at least 2% on at least 30 matured live forward outcomes.
-  Otherwise the current calibration remains in place.
-- The existing live prediction engine reads the approved calibration payload.
-  No user-facing dashboard or manual backtesting action is required.
+`.github/workflows/prediction.yml` runs every five minutes (at minutes
+03, 08, 13, 18, 23, 28, 33, 38, 43, 48, 53 and 58 UTC). It can also be
+started manually with optional force-training and force-calibration switches.
+
+Each bounded GitHub Actions run:
+
+1. Connects to each configured shard and verifies its project assignment.
+2. Reads new price observations, using a disposable cache containing public
+   market prices only to avoid repeatedly downloading the full 180-day history.
+3. Checks matured forecast outcomes against exact observed prices.
+4. Retrains models when at least 10 minutes have elapsed since successful
+   training; calibration is reconsidered every 3 hours.
+5. Produces and stores the 104 configured stock/window/horizon forecasts.
+6. Updates each shard's health heartbeat and processing metrics.
+
+Training and calibration due times are stored in each shard's
+`stock_engine.ml_v2_health` row, not inferred from the wall-clock schedule.
+A run can be delayed by GitHub queueing. Runs do not overlap within this
+repository, and per-project PostgreSQL advisory locks prevent simultaneous
+workers from writing the same shard.
+
+The worker processes up to four shard projects concurrently and has a 12-minute
+job limit. It is a finite scheduled job, not an always-on server. Five-minute
+scheduling is best-effort: GitHub may delay or drop scheduled runs.
 
 ## Required setup
 
-1. Add the repository Actions secret `STOCK_ML_PROJECTS_JSON`, containing a JSON
-   object mapping configured shard numbers (1-18) to PostgreSQL session-pooler
-   connection URLs. Never commit connection URLs or credentials.
-2. In each shard, install the existing live ML schema first (including
-   `stock_engine.ml_v2_checks` and `stock_engine.ml_v2_calibration`), then run
-   `python/stock_ml/backtest_setup.sql`. The SQL creates isolated backtest
-   result tables and does not alter existing RLS policies.
-3. Ensure the database role used by the secret can read `stock_engine.prices`
-   and write the new private `stock_engine.ml_backtest_*` tables and the
-   existing ML calibration table.
-4. Enable GitHub Actions and check the first manual run before relying on the
-   daily schedule.
+1. Add the Actions repository secret `STOCK_ML_PROJECTS_JSON`. It must be a
+   JSON object mapping each configured shard number (1-18) to that shard's
+   PostgreSQL **Session pooler** connection URL. Use the same shard mapping
+   already configured for the Torn-Helper Python prediction worker. Never
+   commit URLs or credentials.
+2. In each stock shard, install the live prediction schema by running
+   `python/stock_ml/realtime_setup.sql`. This creates the private
+   `stock_engine.ml_v2_*` tables and does not modify existing RLS policies.
+   The worker expects the collector schema and helper function
+   `stock_engine.collect_responses()` to already exist.
+3. Ensure the connection role can read `stock_engine.settings`,
+   `stock_engine.stocks`, and `stock_engine.prices`, call the collector
+   helper, and read/write the `stock_engine.ml_v2_*` tables.
+4. Enable GitHub Actions. Verify the first manual prediction run before
+   relying on the five-minute schedule.
 
-The scheduled workflow can be manually dispatched for a selected set of stock
-IDs or a 30-180 day lookback. The default workload is capped at 2 folds per family/configuration. The
-comparison writes metrics for all families, but only the existing Ridge
-family is eligible for live calibration promotion until alternative models
-are explicitly integrated into the live prediction worker.
+The prediction workflow uses the same `STOCK_ML_PROJECTS_JSON` secret as the
+manual backtest workflow. No secret is embedded in source or printed in logs.
 
-## Backtesting assumptions and limitations
+## Database ownership
 
-The simulator uses actual recorded prices, but assumes entry at the decision
-minute close and exit at the exact horizon close. Fees and slippage are explicit
-assumptions; real spreads, order-book depth, market impact and fill timing may
-differ. Minute observations are deduplicated to the last observation per minute.
-Missing observations are not fabricated. Insufficient history produces no
-candidate rather than a forced calibration.
+Each stock is written only to its assigned shard:
 
-Backtesting is research, not proof of profitability. The backtest calibration
-candidate is fitted on a chronological subset and checked on a later holdout;
-promotion additionally requires independent matured live forward outcomes.
-Model-family results are evaluated with chronological, purged training/validation
-splits. The ensemble is a median of candidate-family forecasts. Historical
-performance is not proof of future profitability; promotion must be based on
-matured forward outcomes. Alternative model families are recorded for
-comparison but are not automatically deployed to the live predictor.
+| Project | Stock IDs |
+|---|---|
+| 1-17 | 2 per project: `project * 2 - 1` and `project * 2` |
+| 18 | 35 |
+
+The main application database remains separate from the stock-data shards.
+The worker validates project assignments before writing. Its database schema
+is isolated in `stock_engine`; this repository does not change RLS policies.
+
+## Model and safety behavior
+
+- The live model registry contains 104 combinations: 12 short windows x 6
+  short horizons, plus 8 long windows x 4 long horizons.
+- The adaptive linear model selects Ridge, ElasticNet or a Ridge/ElasticNet
+  blend using chronological validation with horizon purging.
+- Forecasts that fail validation, lack sufficient history, have stale prices,
+  or exceed supported prediction bounds are not forced into Buy/Sell signals.
+- Calibration uses matured, non-overlapping forward outcomes. Insufficient
+  samples or no demonstrated holdout improvement leave calibration inactive.
+- Forecasts are saved in `stock_engine.ml_v2_latest`; forward checks and
+  health data are saved separately.
+
+The prediction worker is not a guarantee of profitability. Forecasts are
+estimates, not financial advice, and actual execution prices, spreads and
+liquidity may differ from stored closes.
+
+## Backtesting (manual-only for now)
+
+Historical walk-forward comparisons are intentionally paused from automatic
+scheduling while the five-minute prediction pipeline is stabilized. Run
+`.github/workflows/backtest.yml` manually when needed. The screening matrix
+uses 12 representative short-style window/horizon combinations and three
+model families, with a default maximum of 20 folds. It evaluates the most
+recent 15 days out of sample using up to 180 days of history.
+
+Backtest outputs use separate `stock_engine.ml_backtest_*` tables. Only the
+Ridge-compatible calibration path can be considered for live promotion, and
+only after independent matured live-forward validation. Alternative model
+families remain comparison-only.
+
+Before running backtests, install `python/stock_ml/backtest_setup.sql` in each
+shard after the live prediction schema is present. This creates isolated
+backtest tables and does not alter RLS policies.
 
 ## Tests
 
@@ -71,5 +107,5 @@ python -m pip install -r python/stock_ml/requirements.txt
 python -m unittest discover -s python/stock_ml -v
 ```
 
-No credentials, private holdings, account data or personal information belong in
-this public repository.
+No credentials, private holdings, account data or personal information belong
+in this public repository.
