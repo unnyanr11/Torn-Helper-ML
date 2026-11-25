@@ -11,7 +11,8 @@ import sys
 import time
 import numpy as np
 from realtime_model import (COMBINATIONS,SHORT_RANGES,SHORT_HORIZONS,
-    prepare_series,feature_matrix,train_range,make_result,baseline_forecast,calibrate,validate_series)
+    prepare_series,feature_matrix,train_range,make_result,baseline_forecast,calibrate,validate_series,
+    DEFAULT_FEE_BPS,DEFAULT_SLIPPAGE_BPS,DEFAULT_MIN_EXPECTED_NET_RETURN)
 from diagnostics import safe_error,project_connection,ConnectionStageError
 from realtime_store import connect,load_payloads,save_payloads,save_results,read_prices,check_outcomes,health
 
@@ -47,7 +48,7 @@ def is_due(previous, seconds, now=None):
     return previous is None or ((now or datetime.now(timezone.utc))-previous).total_seconds()>=seconds
 
 
-def process(project,dsn,force_train=False,force_calibrate=False):
+def process(project,dsn,force_train=False,force_calibrate=False,minimum_net_return=DEFAULT_MIN_EXPECTED_NET_RETURN):
     with project_connection(connect,dsn) as conn:
         if not conn.execute('select pg_try_advisory_lock(%s,%s)',(74183000,project)).fetchone()[0]:
             # Scheduled cycles may overlap. Another run already owns this shard,
@@ -120,7 +121,8 @@ def process(project,dsn,force_train=False,force_calibrate=False):
                 model=models.get(key)
                 if model and model.get('status')=='ready' and origin-model.get('trained_through',0)>60:
                     model=dict(status='training',reason='Waiting for a recently trained Python model')
-                result=make_result(model,corrections.get(key),x,valid)
+                result=make_result(model,corrections.get(key),x,valid,fee_bps=DEFAULT_FEE_BPS,
+                    slippage_bps=DEFAULT_SLIPPAGE_BPS,minimum_net_return=minimum_net_return)
                 if result['status'] != 'ready':
                     result=baseline_forecast(times,values,origin,window,horizon)
                 result.update(stock_id=stock,style=style,analysis_minutes=window,horizon_minutes=horizon,
@@ -169,11 +171,17 @@ def main():
             raise ValueError()
     except (ValueError,TypeError):
         parser.error('Set STOCK_ML_PROJECTS_JSON to a mapping of project numbers to PostgreSQL URLs')
+    try:
+        minimum_net_return=float(os.getenv('STOCK_MIN_EXPECTED_NET_RETURN',str(DEFAULT_MIN_EXPECTED_NET_RETURN)))
+        if not 0<=minimum_net_return<=0.5:
+            raise ValueError()
+    except ValueError:
+        parser.error('STOCK_MIN_EXPECTED_NET_RETURN must be between 0 and 0.5 (decimal return)')
     failed=False
     def execute(entry):
         number,dsn=entry
         try:
-            process(int(number),dsn,args.force_train,args.force_calibrate)
+            process(int(number),dsn,args.force_train,args.force_calibrate,minimum_net_return)
             return True
         except Exception as exc:
             # Do not log raw exception text: connection errors can contain passwords.
