@@ -1,6 +1,7 @@
 """Vectorized causal features and nested walk-forward Ridge model selection."""
 import hashlib
 import json
+import math
 import os
 import numpy as np
 
@@ -18,7 +19,8 @@ ESTIMATED_TRADING_COST = float(os.getenv('SHORT_ESTIMATED_TRADING_COST', '0.003'
 MIN_EXPECTED_NET_RETURN = float(os.getenv('SHORT_MIN_EXPECTED_NET_RETURN', '0.001'))
 MIN_PREDICTED_GROSS_RETURN = ESTIMATED_TRADING_COST + MIN_EXPECTED_NET_RETURN
 
-if ESTIMATED_TRADING_COST < 0 or MIN_EXPECTED_NET_RETURN < 0:
+if (not math.isfinite(ESTIMATED_TRADING_COST) or not math.isfinite(MIN_EXPECTED_NET_RETURN)
+        or ESTIMATED_TRADING_COST < 0 or MIN_EXPECTED_NET_RETURN < 0):
     raise ValueError('Short-term trading cost and minimum net return must be non-negative')
 
 def validate_series(times, prices):
@@ -216,8 +218,9 @@ def make_result(model,calibration,x,coverage_ok,*,minimum_net_return=None,estima
     # Require the net target after costs and the model's uncertainty margin.
     minimum_net = MIN_EXPECTED_NET_RETURN if minimum_net_return is None else float(minimum_net_return)
     estimated_cost = ESTIMATED_TRADING_COST if estimated_trading_cost is None else float(estimated_trading_cost)
-    if minimum_net < 0 or estimated_cost < 0:
-        raise ValueError('Minimum net return and estimated trading cost must be non-negative')
+    if (not math.isfinite(minimum_net) or not math.isfinite(estimated_cost)
+            or minimum_net < 0 or estimated_cost < 0):
+        raise ValueError('Minimum net return and estimated trading cost must be finite and non-negative')
     required_edge = estimated_cost + minimum_net
     signal='Buy' if approved and value-uncertainty>required_edge else 'Sell' if approved and value+uncertainty< -required_edge else 'Wait'
-    return dict(status='ready',signal=signal,predicted_return=value,raw_return=raw,error_q90=uncertainty,model_id=model['model_id'],validation=model['metrics'],calibrated=cal.get('active',False),calibration_samples=cal.get('samples',0))
+    return dict(status='ready',signal=signal,predicted_return=value,raw_return=raw,error_q90=uncertainty,model_id=model['model_id'],validation=model['metrics'],calibrated=cal.get('active',False),calibration_samples=cal.get('samples',0),minimum_expected_net_return=minimum_net,estimated_trading_cost=estimated_cost,minimum_predicted_gross_return=required_edge)
