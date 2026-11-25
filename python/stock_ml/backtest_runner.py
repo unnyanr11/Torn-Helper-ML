@@ -1,6 +1,5 @@
 """Run walk-forward backtests against each configured shard's observed prices."""
 import json, os, sys, uuid
-from datetime import datetime, timezone, timedelta
 import psycopg
 import numpy as np
 from psycopg.types.json import Jsonb
@@ -59,9 +58,10 @@ def process(project,dsn,stock_ids,lookback_days,max_folds):
         for stock in stocks:
             if stock not in (project*2-1,project*2) or stock>35: raise ValueError('unexpected stock assignment')
             if stock_ids and stock not in stock_ids: continue
-            rows=conn.execute("""select floor(extract(epoch from observed_at)/60)::bigint,price
+            rows=conn.execute("""select floor(extract(epoch from observed_at)/60)::bigint,
+                       (array_agg(price order by observed_at desc))[1]
                 from stock_engine.prices where stock_id=%s and observed_at>=now()-(%s * interval '1 day')
-                order by observed_at""",(stock,lookback_days)).fetchall()
+                group by 1 order by 1""",(stock,lookback_days)).fetchall()
             if len(rows)<1000: print(f"stock {stock}: insufficient raw observations"); continue
             times=[int(r[0]) for r in rows]; prices=[float(r[1]) for r in rows]
             # Backtest a conservative 24-hour model with 7-day feature window;
@@ -101,7 +101,7 @@ def main():
     if not projects: raise SystemExit('Configure STOCK_ML_PROJECTS_JSON in repository secrets')
     requested={int(x) for x in os.getenv('STOCK_IDS','').split(',') if x.strip()}
     if requested and (min(requested)<1 or max(requested)>35): raise SystemExit('STOCK_IDS must be between 1 and 35')
-    days=int(os.getenv('LOOKBACK_DAYS','180')); folds=int(os.getenv('MAX_FOLDS','120'))
+    days=int(os.getenv('LOOKBACK_DAYS','180')); folds=int(os.getenv('MAX_FOLDS','60'))
     if not 30<=days<=180 or not 10<=folds<=500: raise SystemExit('lookback_days must be 30-180 and max_folds 10-500')
     failed=False
     for n,dsn in projects.items():
