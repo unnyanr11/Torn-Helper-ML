@@ -11,10 +11,33 @@ SHORT_HORIZONS = tuple(h * 60 for h in (1, 3, 6, 12, 18, 24))
 COMBINATIONS = tuple(('short', r, h)
                      for r in SHORT_RANGES for h in SHORT_HORIZONS)
 RIDGE_ALPHAS = (1.0, 10.0, 100.0, 1000.0)
-# Known stock-trading sell fee plus the user's default minimum net return.
-ESTIMATED_TRADING_COST = 0.001
-MIN_EXPECTED_NET_RETURN = 0.002
-MIN_PREDICTED_GROSS_RETURN = ESTIMATED_TRADING_COST + MIN_EXPECTED_NET_RETURN
+# Backtest defaults: 10 bps fee + 5 bps slippage on each side.
+DEFAULT_FEE_BPS = 10.0
+DEFAULT_SLIPPAGE_BPS = 5.0
+DEFAULT_MIN_EXPECTED_NET_RETURN = 0.001  # 0.1% short-term default
+
+
+def required_gross_return(*, fee_bps=DEFAULT_FEE_BPS, slippage_bps=DEFAULT_SLIPPAGE_BPS,
+                          minimum_net_return=DEFAULT_MIN_EXPECTED_NET_RETURN):
+    values=(fee_bps,slippage_bps,minimum_net_return)
+    if any(not np.isfinite(v) for v in values) or not 0<=fee_bps<=500 or not 0<=slippage_bps<=500 or not 0<=minimum_net_return<=0.5:
+        raise ValueError('Invalid fee, slippage or minimum net return')
+    round_trip_cost=2.0*(fee_bps+slippage_bps)/10000.0
+    return round_trip_cost+minimum_net_return
+
+
+def signal_for_return(predicted_return, uncertainty, approved, *, fee_bps=DEFAULT_FEE_BPS,
+                      slippage_bps=DEFAULT_SLIPPAGE_BPS,
+                      minimum_net_return=DEFAULT_MIN_EXPECTED_NET_RETURN):
+    if not approved or not np.isfinite(predicted_return) or not np.isfinite(uncertainty) or uncertainty<0:
+        return 'Wait'
+    required=required_gross_return(fee_bps=fee_bps,slippage_bps=slippage_bps,
+                                   minimum_net_return=minimum_net_return)
+    lower=predicted_return-uncertainty
+    upper=predicted_return+uncertainty
+    if lower>required: return 'Buy'
+    if upper< -required: return 'Sell'
+    return 'Wait'
 
 def validate_series(times, prices):
     times=np.asarray(times,dtype=np.int64); prices=np.asarray(prices,dtype=np.float64)
@@ -202,13 +225,14 @@ def calibrate(rows):
     q90=float(np.quantile(abs(actual[split:]-corrected),.9))
     return dict(scale=scale if approved else 1.,bias=bias if approved else 0.,error_q90=q90 if approved else None,samples=len(rows),active=approved)
 
-def make_result(model,calibration,x,coverage_ok):
+def make_result(model,calibration,x,coverage_ok,*,fee_bps=DEFAULT_FEE_BPS,
+                slippage_bps=DEFAULT_SLIPPAGE_BPS,
+                minimum_net_return=DEFAULT_MIN_EXPECTED_NET_RETURN):
     if not coverage_ok: return dict(status='insufficient_history',signal='Wait',reason='Selected input window is incomplete')
     if not model or model.get('status')!='ready': return dict(status=model.get('status','training') if model else 'training',signal='Wait',reason=model.get('reason','Initial model is training') if model else 'Initial model is training')
     raw=float(infer(model['parameters'],x)); cal=calibration or dict(scale=1.,bias=0.,error_q90=None,active=False,samples=0); value=raw*cal['scale']+cal['bias']
     if not np.isfinite(value) or abs(value)>.5: return dict(status='unavailable',signal='Wait',reason='Prediction outside supported bounds')
     uncertainty=max(model['metrics']['error_q90'],cal.get('error_q90') or 0.); approved=model['metrics']['approved']
-    # Match the backtest gate: forecast edge must cover round-trip costs plus the configured 0.2% net target, after uncertainty.
-    required_edge=MIN_PREDICTED_GROSS_RETURN
-    signal='Buy' if approved and value-uncertainty>required_edge else 'Sell' if approved and value+uncertainty< -required_edge else 'Wait'
+    signal=signal_for_return(value,uncertainty,approved,fee_bps=fee_bps,
+        slippage_bps=slippage_bps,minimum_net_return=minimum_net_return)
     return dict(status='ready',signal=signal,predicted_return=value,raw_return=raw,error_q90=uncertainty,model_id=model['model_id'],validation=model['metrics'],calibrated=cal.get('active',False),calibration_samples=cal.get('samples',0))

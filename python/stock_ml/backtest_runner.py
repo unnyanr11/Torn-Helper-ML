@@ -4,7 +4,8 @@ import psycopg
 import numpy as np
 from psycopg.types.json import Jsonb
 from backtesting import run_backtest, calibration_from_backtest, MODEL_FAMILIES
-from realtime_model import COMBINATIONS
+from realtime_model import (COMBINATIONS, DEFAULT_FEE_BPS, DEFAULT_SLIPPAGE_BPS,
+    DEFAULT_MIN_EXPECTED_NET_RETURN)
 
 # Exercise the complete live registry: 12 short windows x 6 horizons and
 # 8 long windows x 4 horizons (104 total). Compare all supported backtest
@@ -56,7 +57,7 @@ def validate_and_promote(conn, stock, run_id, candidate, *, style, window_minute
     return dict(promoted=True, samples=len(rows), baseline_mae=baseline_mae,
                 candidate_mae=candidate_mae, error_q90=q90)
 
-def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds):
+def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds,minimum_net_return):
     with psycopg.connect(dsn,sslmode='require',connect_timeout=15,autocommit=True) as conn:
         settings=conn.execute("select project_number,enabled from stock_engine.settings where singleton").fetchone()
         if not settings or int(settings[0])!=project or not settings[1]:
@@ -83,7 +84,8 @@ def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds):
               for model_family in BACKTEST_MODEL_FAMILIES:
                         run_id=uuid.uuid4()
                         config=dict(style=style,window_minutes=window_minutes,horizon_minutes=horizon_minutes,
-                            fee_bps=10,slippage_bps=5,initial_capital=10000,max_folds=max_folds,
+                            fee_bps=DEFAULT_FEE_BPS,slippage_bps=DEFAULT_SLIPPAGE_BPS,
+                            minimum_net_return=minimum_net_return,initial_capital=10000,max_folds=max_folds,
                             lookback_days=lookback_days,evaluation_days=(evaluation_days or None),
                             evaluation_mode=('all_available_after_minimum_training' if evaluation_days==0 else 'fixed_recent_window'),
                             available_history_days=round(available_days,2),
@@ -96,7 +98,8 @@ def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds):
                             horizon_minutes=horizon_minutes,style=style,fee_bps=config['fee_bps'],
                             slippage_bps=config['slippage_bps'],initial_capital=config['initial_capital'],
                             max_folds=max_folds,model_family=model_family,
-                            evaluation_start_minute=evaluation_start)
+                            evaluation_start_minute=evaluation_start,
+                            minimum_net_return=minimum_net_return)
                         with conn.transaction():
                             conn.execute("update stock_engine.ml_backtest_runs set status=%s,metrics=%s where run_id=%s",
                                 (result['status'],Jsonb(result['metrics']),run_id))
@@ -137,6 +140,10 @@ def main():
     if not projects: raise SystemExit('Configure STOCK_ML_PROJECTS_JSON in repository secrets')
     requested={int(x) for x in os.getenv('STOCK_IDS','').split(',') if x.strip()}
     if requested and (min(requested)<1 or max(requested)>35): raise SystemExit('STOCK_IDS must be between 1 and 35')
+    try:
+        minimum_net_return=float(os.getenv('STOCK_MIN_EXPECTED_NET_RETURN',str(DEFAULT_MIN_EXPECTED_NET_RETURN)))
+        if not 0<=minimum_net_return<=0.5: raise ValueError()
+    except ValueError: raise SystemExit('STOCK_MIN_EXPECTED_NET_RETURN must be between 0 and 0.5 (decimal return)')
     days=int(os.getenv('LOOKBACK_DAYS','180')); evaluation_days=int(os.getenv('EVALUATION_DAYS','0'))
     folds=int(os.getenv('MAX_FOLDS','30'))
     if not 30<=days<=180 or not 0<=evaluation_days<days or not 1<=folds<=500:
@@ -147,7 +154,7 @@ def main():
         # Avoid opening unrelated shard connections during a targeted smoke test.
         if requested and not any(stock in (project*2-1, project*2) and stock<=35 for stock in requested):
             continue
-        try: process(project,dsn,requested,days,evaluation_days,folds)
+        try: process(project,dsn,requested,days,evaluation_days,folds,minimum_net_return)
         except Exception:
             failed=True
             print(f"Shard {project} failed; full traceback follows:",file=sys.stderr)
