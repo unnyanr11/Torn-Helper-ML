@@ -1,6 +1,7 @@
 """Vectorized causal features and nested walk-forward Ridge model selection."""
 import hashlib
 import json
+import os
 import numpy as np
 
 VERSION = 'minute-adaptive-linear-v1'
@@ -11,10 +12,14 @@ SHORT_HORIZONS = tuple(h * 60 for h in (1, 3, 6, 12, 18, 24))
 COMBINATIONS = tuple(('short', r, h)
                      for r in SHORT_RANGES for h in SHORT_HORIZONS)
 RIDGE_ALPHAS = (1.0, 10.0, 100.0, 1000.0)
-# Known stock-trading sell fee plus the user's default minimum net return.
-ESTIMATED_TRADING_COST = 0.001
-MIN_EXPECTED_NET_RETURN = 0.002
+# Short-term defaults: 0.1% minimum NET return after configured costs.
+# Environment overrides configure worker/backtest defaults; no profit ceiling exists.
+ESTIMATED_TRADING_COST = float(os.getenv('SHORT_ESTIMATED_TRADING_COST', '0.001'))
+MIN_EXPECTED_NET_RETURN = float(os.getenv('SHORT_MIN_EXPECTED_NET_RETURN', '0.001'))
 MIN_PREDICTED_GROSS_RETURN = ESTIMATED_TRADING_COST + MIN_EXPECTED_NET_RETURN
+
+if ESTIMATED_TRADING_COST < 0 or MIN_EXPECTED_NET_RETURN < 0:
+    raise ValueError('Short-term trading cost and minimum net return must be non-negative')
 
 def validate_series(times, prices):
     times=np.asarray(times,dtype=np.int64); prices=np.asarray(prices,dtype=np.float64)
@@ -202,13 +207,17 @@ def calibrate(rows):
     q90=float(np.quantile(abs(actual[split:]-corrected),.9))
     return dict(scale=scale if approved else 1.,bias=bias if approved else 0.,error_q90=q90 if approved else None,samples=len(rows),active=approved)
 
-def make_result(model,calibration,x,coverage_ok):
+def make_result(model,calibration,x,coverage_ok,*,minimum_net_return=None,estimated_trading_cost=None):
     if not coverage_ok: return dict(status='insufficient_history',signal='Wait',reason='Selected input window is incomplete')
     if not model or model.get('status')!='ready': return dict(status=model.get('status','training') if model else 'training',signal='Wait',reason=model.get('reason','Initial model is training') if model else 'Initial model is training')
     raw=float(infer(model['parameters'],x)); cal=calibration or dict(scale=1.,bias=0.,error_q90=None,active=False,samples=0); value=raw*cal['scale']+cal['bias']
     if not np.isfinite(value) or abs(value)>.5: return dict(status='unavailable',signal='Wait',reason='Prediction outside supported bounds')
     uncertainty=max(model['metrics']['error_q90'],cal.get('error_q90') or 0.); approved=model['metrics']['approved']
-    # Match the backtest gate: forecast edge must cover round-trip costs plus the configured 0.2% net target, after uncertainty.
-    required_edge=MIN_PREDICTED_GROSS_RETURN
+    # Require the net target after costs and the model's uncertainty margin.
+    minimum_net = MIN_EXPECTED_NET_RETURN if minimum_net_return is None else float(minimum_net_return)
+    estimated_cost = ESTIMATED_TRADING_COST if estimated_trading_cost is None else float(estimated_trading_cost)
+    if minimum_net < 0 or estimated_cost < 0:
+        raise ValueError('Minimum net return and estimated trading cost must be non-negative')
+    required_edge = estimated_cost + minimum_net
     signal='Buy' if approved and value-uncertainty>required_edge else 'Sell' if approved and value+uncertainty< -required_edge else 'Wait'
     return dict(status='ready',signal=signal,predicted_return=value,raw_return=raw,error_q90=uncertainty,model_id=model['model_id'],validation=model['metrics'],calibrated=cal.get('active',False),calibration_samples=cal.get('samples',0))
