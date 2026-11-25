@@ -5,12 +5,11 @@ import numpy as np
 
 VERSION = 'minute-adaptive-linear-v1'
 SHORT_RANGES = (15, 30, 60, 120, 180, 360, 720, 1080, 1440, 4320, 10080, 43200)
-LONG_RANGES = tuple(d * 1440 for d in (7, 15, 30, 60, 90, 120, 150, 180))
 SHORT_HORIZONS = tuple(h * 60 for h in (1, 3, 6, 12, 18, 24))
-LONG_HORIZONS = tuple(h * 60 for h in (168, 336, 504, 672))
-COMBINATIONS = tuple((style, r, h) for style, ranges, horizons in
-                     (('short', SHORT_RANGES, SHORT_HORIZONS),
-                      ('long', LONG_RANGES, LONG_HORIZONS)) for r in ranges for h in horizons)
+# This repository owns short-term analysis only. Long-term analysis lives in
+# the dedicated LongTerm-Torn-Helper-ML repository.
+COMBINATIONS = tuple(('short', r, h)
+                     for r in SHORT_RANGES for h in SHORT_HORIZONS)
 RIDGE_ALPHAS = (1.0, 10.0, 100.0, 1000.0)
 
 def validate_series(times, prices):
@@ -51,7 +50,9 @@ def train_range(times, prices, style, window, horizons, prepared=None):
     from sklearn.linear_model import Ridge, ElasticNet
     from sklearn.preprocessing import StandardScaler
     times, prices = validate_series(times, prices)
-    stride = 15 if style == 'short' else 60
+    if style != 'short':
+        raise ValueError('Only short-term analysis is supported in this repository')
+    stride = 15
     origins = times[times % stride == 0]
     if len(origins) > 3000:
         origins = origins[np.linspace(0, len(origins) - 1, 3000).astype(int)]
