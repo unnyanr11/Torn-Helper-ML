@@ -119,15 +119,17 @@ concurrency prevents overlapping full batches; a dispatched run may wait for
 the previous batch to finish.
 
 The report job runs after the stock matrix and stores model rankings in
-`stock_engine.ml_backtest_reports`. Before running backtests, install
-`python/stock_ml/backtest_setup.sql` in each shard after the live prediction
-schema is present. This creates isolated backtest tables and does not alter
-existing RLS policies.
+`stock_engine.ml_backtest_reports`. Before the matrix starts, the workflow now runs
+`python/stock_ml/backtest_setup.py` across every configured shard. It validates
+each shard assignment, applies the additive DDL in
+`python/stock_ml/backtest_setup.sql`, and verifies that
+`stock_engine.ml_backtest_reports` exists. This makes setup repeatable and
+idempotent, and does not modify existing RLS policies.
 
 ## Backtest performance reporting
 
-After the stock matrix finishes, the workflow runs
-`python/stock_ml/backtest_reporting.py` against each configured shard. It
+After the stock matrix finishes and only when schema provisioning succeeded,
+the workflow runs `python/stock_ml/backtest_reporting.py` against each configured shard. It
 evaluates completed runs from the preceding eight hours and stores a compact
 JSON report in `stock_engine.ml_backtest_reports`. Reports include each
 configuration's sample count, MAE, RMSE, zero-return baseline MAE, directional
