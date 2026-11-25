@@ -204,5 +204,7 @@ def make_result(model,calibration,x,coverage_ok):
     raw=float(infer(model['parameters'],x)); cal=calibration or dict(scale=1.,bias=0.,error_q90=None,active=False,samples=0); value=raw*cal['scale']+cal['bias']
     if not np.isfinite(value) or abs(value)>.5: return dict(status='unavailable',signal='Wait',reason='Prediction outside supported bounds')
     uncertainty=max(model['metrics']['error_q90'],cal.get('error_q90') or 0.); approved=model['metrics']['approved']
-    signal='Buy' if approved and value-uncertainty>.003 else 'Sell' if approved and value+uncertainty<-.003 else 'Wait'
+    # Match the backtest gate: forecast edge must cover round-trip costs plus the configured 0.2% net target, after uncertainty.
+    required_edge=MIN_PREDICTED_GROSS_RETURN
+    signal='Buy' if approved and value-uncertainty>required_edge else 'Sell' if approved and value+uncertainty< -required_edge else 'Wait'
     return dict(status='ready',signal=signal,predicted_return=value,raw_return=raw,error_q90=uncertainty,model_id=model['model_id'],validation=model['metrics'],calibrated=cal.get('active',False),calibration_samples=cal.get('samples',0))
