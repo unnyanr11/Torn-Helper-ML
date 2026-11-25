@@ -67,7 +67,7 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
         if int(candidate)>=last_exit:
             non_overlapping.append(int(candidate)); last_exit=int(candidate)+horizon_minutes
     predictions=[]; trades=[]; equity=float(initial_capital); peak=equity; max_dd=0.0
-    cost=(fee_bps+slippage_bps)*2/10000.0
+    cost=(fee_bps + 2.0*slippage_bps)/10000.0
     minimum_net = MIN_EXPECTED_NET_RETURN if minimum_net_return is None else float(minimum_net_return)
     if not math.isfinite(minimum_net) or minimum_net < 0:
         raise ValueError('minimum_net_return must be finite and non-negative')
