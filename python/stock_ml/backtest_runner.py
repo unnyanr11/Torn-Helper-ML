@@ -118,9 +118,20 @@ def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds):
                             candidate=calibration_from_backtest(result['predictions'])
                             conn.execute("""insert into stock_engine.ml_backtest_calibration_candidates(run_id,candidate)
                                 values(%s,%s)""",(run_id,Jsonb(candidate)))
-                        promotion=(validate_and_promote(conn,stock,run_id,candidate,style=style,
-                            window_minutes=window_minutes,horizon_minutes=horizon_minutes)
-                            if model_family=='ridge' else dict(promoted=False,reason='alternative_family_not_wired_to_live_predictor'))
+                        # Backtests are comparison/evaluation only by default. Live calibration
+                        # promotion requires an explicit opt-in and is disabled in the
+                        # parallel GitHub Actions workflow.
+                        promotion=(
+                            validate_and_promote(conn,stock,run_id,candidate,style=style,
+                                window_minutes=window_minutes,horizon_minutes=horizon_minutes)
+                            if model_family=='ridge'
+                            and os.getenv('ALLOW_CALIBRATION_PROMOTION','false').lower()=='true'
+                            else dict(promoted=False,reason=(
+                                'promotion_disabled_for_backtest'
+                                if os.getenv('ALLOW_CALIBRATION_PROMOTION','false').lower()!='true'
+                                else 'alternative_family_not_wired_to_live_predictor'
+                            ))
+                        )
                         print(json.dumps(dict(stock_id=stock,run_id=str(run_id),model_family=model_family,config=config,
                             status=result['status'],metrics=result['metrics'],calibration_candidate=candidate,
                             calibration_promotion=promotion)))
