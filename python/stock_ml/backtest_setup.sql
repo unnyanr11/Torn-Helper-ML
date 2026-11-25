@@ -1,4 +1,4 @@
--- Install in each stock shard. This is additive and does not alter RLS on existing tables.
+-- Install in each stock shard. Additive only; does not modify existing RLS policies.
 begin;
 create table if not exists stock_engine.ml_backtest_runs (
   run_id uuid primary key,
@@ -42,11 +42,19 @@ create table if not exists stock_engine.ml_backtest_calibration_candidates (
   promoted boolean not null default false,
   promotion_reason text
 );
+create table if not exists stock_engine.ml_backtest_reports (
+  report_id uuid primary key,
+  generated_at timestamptz not null default now(),
+  report jsonb not null
+);
 create index if not exists ml_backtest_runs_stock_created on stock_engine.ml_backtest_runs(stock_id,created_at desc);
+create index if not exists ml_backtest_predictions_run on stock_engine.ml_backtest_predictions(run_id);
 alter table stock_engine.ml_backtest_runs enable row level security;
 alter table stock_engine.ml_backtest_predictions enable row level security;
 alter table stock_engine.ml_backtest_trades enable row level security;
 alter table stock_engine.ml_backtest_calibration_candidates enable row level security;
+alter table stock_engine.ml_backtest_reports enable row level security;
 revoke all on stock_engine.ml_backtest_runs,stock_engine.ml_backtest_predictions,
- stock_engine.ml_backtest_trades,stock_engine.ml_backtest_calibration_candidates from public,anon,authenticated;
+ stock_engine.ml_backtest_trades,stock_engine.ml_backtest_calibration_candidates,
+ stock_engine.ml_backtest_reports from public,anon,authenticated;
 commit;
