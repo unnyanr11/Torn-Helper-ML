@@ -1,9 +1,13 @@
 import unittest
 import numpy as np
 from backtesting import run_backtest, calibration_from_backtest
-from realtime_model import train_range, RIDGE_ALPHAS
+from realtime_model import train_range, RIDGE_ALPHAS, COMBINATIONS
 
 class BacktestTests(unittest.TestCase):
+    def test_backtest_matrix_covers_all_registered_live_combinations(self):
+        self.assertEqual(len(COMBINATIONS),104)
+        self.assertEqual(len(set(COMBINATIONS)),104)
+
     def test_rejects_invalid_costs(self):
         with self.assertRaises(ValueError):
             run_backtest(np.arange(1000),np.ones(1000),window_minutes=60,horizon_minutes=60,fee_bps=999)
