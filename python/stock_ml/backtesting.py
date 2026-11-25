@@ -136,7 +136,7 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
             final_capital=equity,win_rate=wins/len(trades) if trades else None,wins=wins,losses=losses,
             max_drawdown=max_dd,sharpe_non_annualized=sharpe,prediction_error=_metrics(errors),
             actual_return=_metrics(actuals),profit_factor=(sum(r for r in trade_returns if r>0)/
-            abs(sum(r for r in trade_returns if r<0))) if losses else None),
+            abs(sum(r for r in trade_returns if r<0))) if losses else (1000.0 if wins else None)),
         predictions=predictions,trades=trades)
 
 def calibration_from_backtest(predictions,*,minimum_samples=30):
