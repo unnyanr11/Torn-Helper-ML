@@ -5,7 +5,7 @@ create index if not exists stock_prices_received
   on stock_engine.prices(received_at);
 create table if not exists stock_engine.ml_v2_models (
   stock_id integer not null references stock_engine.stocks(stock_id),
-  style text not null check(style in ('short','long')),
+  style text not null check(style = 'short'),
   analysis_minutes integer not null,
   horizon_minutes integer not null,
   trained_at timestamptz not null default now(),
@@ -14,7 +14,7 @@ create table if not exists stock_engine.ml_v2_models (
 );
 create table if not exists stock_engine.ml_v2_latest (
   stock_id integer not null references stock_engine.stocks(stock_id),
-  style text not null check(style in ('short','long')),
+  style text not null check(style = 'short'),
   analysis_minutes integer not null,
   horizon_minutes integer not null,
   origin_at timestamptz not null,
@@ -24,7 +24,7 @@ create table if not exists stock_engine.ml_v2_latest (
 );
 create table if not exists stock_engine.ml_v2_checks (
   stock_id integer not null references stock_engine.stocks(stock_id),
-  style text not null check(style in ('short','long')),
+  style text not null check(style = 'short'),
   analysis_minutes integer not null,
   horizon_minutes integer not null,
   origin_at timestamptz not null,
@@ -43,7 +43,7 @@ create index if not exists stock_ml_v2_due on stock_engine.ml_v2_checks(target_a
   where checked_at is null;
 create table if not exists stock_engine.ml_v2_calibration (
   stock_id integer not null references stock_engine.stocks(stock_id),
-  style text not null check(style in ('short','long')),
+  style text not null check(style = 'short'),
   analysis_minutes integer not null,
   horizon_minutes integer not null,
   calibrated_at timestamptz not null default now(),
