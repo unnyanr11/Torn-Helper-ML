@@ -86,7 +86,7 @@ jobs:
         env:
           STOCK_ML_PROJECTS_JSON: ${{ secrets.STOCK_ML_PROJECTS_JSON }}
           SHORT_MIN_EXPECTED_NET_RETURN: ${{ vars.SHORT_MIN_EXPECTED_NET_RETURN || '0.001' }}
-          SHORT_ESTIMATED_TRADING_COST: ${{ vars.SHORT_ESTIMATED_TRADING_COST || '0.003' }}
+          SHORT_ESTIMATED_TRADING_COST: ${{ vars.SHORT_ESTIMATED_TRADING_COST || '0.002' }}
           ML_FORCE_TRAIN: ${{ inputs.force_train || false }}
           ML_FORCE_CALIBRATE: ${{ inputs.force_calibrate || false }}
           GITHUB_SHA: ${{ github.sha }}
