@@ -1,38 +1,67 @@
 # Torn-Helper ML
 
-Public Python research engine for Torn-Helper. The private application remains in
-[unnyanr11/Torn-Helper](https://github.com/unnyanr11/Torn-Helper).
+Backend-only machine-learning and research worker for Torn-Helper. There is no
+website backtesting interface: scheduled jobs evaluate the models in the background
+and store results/calibration in the assigned Supabase stock shards.
 
-## Backtesting & calibration
+## Autonomous learning cycle
 
-The walk-forward engine in `python/stock_ml/backtesting.py` replays actual
-historical observations. Each fold trains on a strict chronological prefix ending
-at its decision time; future prices are used only to score the matured prediction.
-It reports prediction error, return, win rate, drawdown, fees, slippage and virtual
-capital. It does not execute real trades.
+- Live prediction workers continue to train and publish forecasts on their existing cadence.
+- The model performs nested chronological Ridge hyperparameter selection over
+  alpha values 1, 10, 100 and 1000. The selection window is separate from the
+  final untouched validation window, with a forecast-horizon purge between them.
+- A daily GitHub Actions job runs walk-forward backtests against actual stored
+  prices (02:23 UTC / 07:53 India time), with up to 60 non-overlapping evaluation
+  folds per stock.
+- Backtest results, prediction outcomes, trade assumptions and calibration
+  candidates are written to private `stock_engine` tables.
+- A calibration candidate is not promoted based on backtest results alone. It
+  must improve MAE by at least 2% on at least 30 matured live forward outcomes.
+  Otherwise the current calibration remains in place.
+- The existing live prediction engine reads the approved calibration payload.
+  No user-facing dashboard or manual backtesting action is required.
 
-Backtest calibration is a **candidate**, not an unconditional live-model change.
-A correction is fitted on the first 70% of chronological predictions and evaluated
-on the remaining 30%. It is accepted only if holdout MAE improves. Production
-promotion must additionally pass a later, untouched forward-validation window.
-Failed candidates leave the active live calibration unchanged.
+## Required setup
 
-## Setup
+1. Add the repository Actions secret `STOCK_ML_PROJECTS_JSON`, containing a JSON
+   object mapping configured shard numbers (1-18) to PostgreSQL session-pooler
+   connection URLs. Never commit connection URLs or credentials.
+2. In each shard, install the existing live ML schema first (including
+   `stock_engine.ml_v2_checks` and `stock_engine.ml_v2_calibration`), then run
+   `python/stock_ml/backtest_setup.sql`. The SQL creates isolated backtest
+   result tables and does not alter existing RLS policies.
+3. Ensure the database role used by the secret can read `stock_engine.prices`
+   and write the new private `stock_engine.ml_backtest_*` tables and the
+   existing ML calibration table.
+4. Enable GitHub Actions and check the first manual run before relying on the
+   daily schedule.
 
-- Python 3.12
-- Install `pip install -r python/stock_ml/requirements.txt`
-- Run `python -m unittest discover -s python/stock_ml -v`
-- Install `python/stock_ml/backtest_setup.sql` in each assigned stock shard before persisting results.
-- Keep all PostgreSQL URLs in GitHub Actions secrets, never in source.
+The scheduled workflow can be manually dispatched for a selected set of stock
+IDs or a 30-180 day lookback. The default daily workload is capped at 60 folds
+per stock to keep runtime bounded.
 
-The source engine uses real observations and does not fill missing timestamps.
-Results are limited by available history and its cadence. A quarter-hour dataset
-cannot support minute-accurate fills. The current simulator assumes entry at the
-decision close and exit at the exact horizon close; actual execution, queue priority,
-spread and market impact can differ.
+## Backtesting assumptions and limitations
 
-## Security
+The simulator uses actual recorded prices, but assumes entry at the decision
+minute close and exit at the exact horizon close. Fees and slippage are explicit
+assumptions; real spreads, order-book depth, market impact and fill timing may
+differ. Minute observations are deduplicated to the last observation per minute.
+Missing observations are not fabricated. Insufficient history produces no
+candidate rather than a forced calibration.
 
-No Supabase credentials, API keys, user portfolios or private application data
-belong in this public repository. Only public market-price observations and
-research code are suitable for publication.
+Backtesting is research, not proof of profitability. The backtest calibration
+candidate is fitted on a chronological subset and checked on a later holdout;
+promotion additionally requires independent matured live forward outcomes.
+The current daily backtest evaluates a seven-day feature window and 24-hour
+horizon per stock. It does not yet select between fundamentally different
+algorithm families.
+
+## Tests
+
+```sh
+python -m pip install -r python/stock_ml/requirements.txt
+python -m unittest discover -s python/stock_ml -v
+```
+
+No credentials, private holdings, account data or personal information belong in
+this public repository.
