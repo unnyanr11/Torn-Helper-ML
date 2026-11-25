@@ -3,7 +3,7 @@ import hashlib
 import json
 import numpy as np
 
-VERSION = 'minute-ridge-v3'
+VERSION = 'minute-adaptive-linear-v1'
 SHORT_RANGES = (15, 30, 60, 120, 180, 360, 720, 1080, 1440, 4320, 10080, 43200)
 LONG_RANGES = tuple(d * 1440 for d in (7, 15, 30, 60, 90, 120, 150, 180))
 SHORT_HORIZONS = tuple(h * 60 for h in (1, 3, 6, 12, 18, 24))
