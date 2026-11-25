@@ -3,21 +3,14 @@ import json, os, sys, uuid, traceback
 import psycopg
 import numpy as np
 from psycopg.types.json import Jsonb
-from backtesting import run_backtest, calibration_from_backtest
+from backtesting import run_backtest, calibration_from_backtest, MODEL_FAMILIES
+from realtime_model import COMBINATIONS
 
-# Compact screening set for the 15-day evaluation: representative short windows
-# and horizons, plus three complementary model families. Ridge remains the only
-# family eligible for live calibration promotion.
-BACKTEST_WINDOWS = (60,)
-BACKTEST_HORIZONS = (60,)
-BACKTEST_STYLES = ('short',)
-BACKTEST_MODEL_FAMILIES = ('ridge',)
-BACKTEST_COMBINATIONS = tuple(
-    (style, window, horizon)
-    for style in BACKTEST_STYLES
-    for window in BACKTEST_WINDOWS
-    for horizon in BACKTEST_HORIZONS
-)
+# Exercise the complete live registry: 12 short windows x 6 horizons and
+# 8 long windows x 4 horizons (104 total). Compare all supported backtest
+# families; only Ridge-compatible candidates can ever be considered for live use.
+BACKTEST_COMBINATIONS = COMBINATIONS
+BACKTEST_MODEL_FAMILIES = MODEL_FAMILIES
 
 
 def validate_and_promote(conn, stock, run_id, candidate, *, style, window_minutes, horizon_minutes):
