@@ -4,23 +4,24 @@ on:
   workflow_dispatch:
     inputs:
       stock_ids:
-        description: Comma-separated stock IDs (1-35); blank means all configured
-        required: false
+        description: Stock IDs to test (start with 1)
+        required: true
+        default: "1"
         type: string
       lookback_days:
         description: Historical lookback in days (max 180)
         required: true
-        default: "180"
+        default: "30"
         type: string
       evaluation_days:
         description: Out-of-sample evaluation period in days
         required: true
-        default: "15"
+        default: "5"
         type: string
       max_folds:
         description: Maximum walk-forward folds per stock
         required: true
-        default: "20"
+        default: "2"
         type: string
   # Backtests are manual-only until the prediction pipeline is stable.
 
