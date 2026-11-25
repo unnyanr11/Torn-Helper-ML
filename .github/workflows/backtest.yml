@@ -15,10 +15,10 @@ on:
       max_folds:
         description: Maximum walk-forward folds per stock
         required: true
-        default: "120"
+        default: "60"
         type: string
   schedule:
-    - cron: "23 2 * * 1"
+    - cron: "23 2 * * *"
 
 permissions:
   contents: read
@@ -46,6 +46,6 @@ jobs:
           STOCK_ML_PROJECTS_JSON: ${{ secrets.STOCK_ML_PROJECTS_JSON }}
           STOCK_IDS: ${{ inputs.stock_ids }}
           LOOKBACK_DAYS: ${{ inputs.lookback_days || '180' }}
-          MAX_FOLDS: ${{ inputs.max_folds || '120' }}
+          MAX_FOLDS: ${{ inputs.max_folds || '60' }}
           GITHUB_SHA: ${{ github.sha }}
         run: python python/stock_ml/backtest_runner.py
