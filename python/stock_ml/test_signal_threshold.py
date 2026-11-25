@@ -19,7 +19,7 @@ def model_with_return(predicted_return, uncertainty=0.001, approved=True):
 class LiveSignalCostGateTests(unittest.TestCase):
     def test_short_term_default_minimum_net_return_is_point_one_percent(self):
         self.assertAlmostEqual(MIN_EXPECTED_NET_RETURN, 0.001)
-        self.assertAlmostEqual(ESTIMATED_TRADING_COST, 0.003)
+        self.assertAlmostEqual(ESTIMATED_TRADING_COST, 0.002)
     def test_buy_requires_round_trip_cost_plus_minimum_net_after_uncertainty(self):
         below = make_result(model_with_return(MIN_PREDICTED_GROSS_RETURN + 0.0005), None, [0.0], True)
         above = make_result(model_with_return(MIN_PREDICTED_GROSS_RETURN + 0.0011), None, [0.0], True)
