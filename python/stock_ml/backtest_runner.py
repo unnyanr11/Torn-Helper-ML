@@ -138,7 +138,7 @@ def main():
     requested={int(x) for x in os.getenv('STOCK_IDS','').split(',') if x.strip()}
     if requested and (min(requested)<1 or max(requested)>35): raise SystemExit('STOCK_IDS must be between 1 and 35')
     days=int(os.getenv('LOOKBACK_DAYS','180')); evaluation_days=int(os.getenv('EVALUATION_DAYS','0'))
-    folds=int(os.getenv('MAX_FOLDS','120'))
+    folds=int(os.getenv('MAX_FOLDS','30'))
     if not 30<=days<=180 or not 0<=evaluation_days<days or not 1<=folds<=500:
         raise SystemExit('lookback_days must be 30-180, evaluation_days 0 (all available) or a positive value less than lookback_days, max_folds 1-500')
     failed=False
