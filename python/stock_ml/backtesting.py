@@ -5,7 +5,8 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import Ridge, ElasticNet
 from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor, HistGradientBoostingRegressor
-from realtime_model import exact, feature_matrix, prepare_series, validate_series, train_range, make_result
+from realtime_model import (exact, feature_matrix, prepare_series, validate_series,
+    train_range, make_result, signal_for_return, DEFAULT_MIN_EXPECTED_NET_RETURN)
 
 MODEL_FAMILIES=('ridge','elastic_net','random_forest','extra_trees','hist_gradient_boosting','ensemble')
 BASE_FAMILIES=MODEL_FAMILIES[:-1]
@@ -48,11 +49,12 @@ def _metrics(values):
 
 def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='short',
                  fee_bps=10.0,slippage_bps=5.0,initial_capital=10000.0,
-                 max_folds=120,min_train_rows=200,trade_on='signal',model_family='ridge',evaluation_start_minute=None):
+                 max_folds=120,min_train_rows=200,trade_on='signal',model_family='ridge',evaluation_start_minute=None,
+                 minimum_net_return=DEFAULT_MIN_EXPECTED_NET_RETURN):
     times,prices=validate_series(times,prices)
     if style != 'short' or window_minutes<15 or horizon_minutes<15 or model_family not in MODEL_FAMILIES:
         raise ValueError('Invalid model style, window, horizon or model family')
-    if not 0<=fee_bps<=500 or not 0<=slippage_bps<=500 or initial_capital<=0:
+    if not 0<=fee_bps<=500 or not 0<=slippage_bps<=500 or not 0<=minimum_net_return<=0.5 or initial_capital<=0:
         raise ValueError('Invalid cost or capital assumption')
     stride=15
     candidates=times[(times%stride)==0]
@@ -77,11 +79,13 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
         if model_family=='ridge':
             fitted=train_range(train_t,train_p,style,window_minutes,[horizon_minutes],prepared).get(horizon_minutes,{})
             if fitted.get('status')!='ready': continue
-            result=make_result(fitted,None,x[0],True)
+            result=make_result(fitted,None,x[0],True,fee_bps=fee_bps,
+                slippage_bps=slippage_bps,minimum_net_return=minimum_net_return)
             validation_mae=float(fitted['metrics']['mae'])
             baseline=float(fitted['metrics']['baseline_mae'])
             approved=bool(fitted['metrics']['approved'])
             final_prediction=float(result.get('predicted_return',0.0))
+            validation_uncertainty=float(fitted['metrics']['error_q90'])
         else:
             stride_origins=train_t[(train_t%stride)==0]
             features,feature_ok=feature_matrix(train_t,train_p,stride_origins,window_minutes,prepared)
@@ -100,11 +104,13 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
             baseline=float(np.mean(np.abs(val_y)))
             approved=bool(baseline>0 and validation_mae<baseline*.98)
             final_prediction=float(_family_predict(model_family,features,y,x)[0])
+            validation_uncertainty=float(np.quantile(np.abs(val_y-val_pred),.90))
         future=float(exact(times,prices,[origin+horizon_minutes])[0])
         current=float(exact(times,prices,[origin])[0])
         if not math.isfinite(future) or not math.isfinite(current): continue
         actual=future/current-1.0
-        signal='Buy' if approved and final_prediction>0 else 'Sell' if approved and final_prediction<0 else 'Wait'
+        signal=signal_for_return(final_prediction,validation_uncertainty,approved,
+            fee_bps=fee_bps,slippage_bps=slippage_bps,minimum_net_return=minimum_net_return,minimum_net_return=minimum_net_return)
         predictions.append(dict(origin_minute=origin,target_minute=origin+horizon_minutes,
             origin_price=current,actual_price=future,predicted_return=final_prediction,
             raw_return=final_prediction,actual_return=actual,
