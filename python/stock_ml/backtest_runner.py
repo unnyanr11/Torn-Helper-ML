@@ -110,9 +110,8 @@ def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds):
                             candidate=calibration_from_backtest(result['predictions'])
                             conn.execute("""insert into stock_engine.ml_backtest_calibration_candidates(run_id,candidate)
                                 values(%s,%s)""",(run_id,Jsonb(candidate)))
-                        # Backtests are comparison/evaluation only by default. Live calibration
-                        # promotion requires an explicit opt-in and is disabled in the
-                        # parallel GitHub Actions workflow.
+                        # Only the live-compatible Ridge path can update calibration, and only after
+                        # independent matured live-forward checks demonstrate improvement.
                         promotion=(
                             validate_and_promote(conn,stock,run_id,candidate,style=style,
                                 window_minutes=window_minutes,horizon_minutes=horizon_minutes)
