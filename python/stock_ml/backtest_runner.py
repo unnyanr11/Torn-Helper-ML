@@ -4,6 +4,7 @@ import psycopg
 import numpy as np
 from psycopg.types.json import Jsonb
 from backtesting import run_backtest, calibration_from_backtest
+from realtime_model import COMBINATIONS
 
 
 def validate_and_promote(conn, stock, run_id, candidate, *, style, window_minutes, horizon_minutes):
@@ -64,18 +65,15 @@ def process(project,dsn,stock_ids,lookback_days,max_folds):
                 group by 1 order by 1""",(stock,lookback_days)).fetchall()
             if len(rows)<1000: print(f"stock {stock}: insufficient raw observations"); continue
             times=[int(r[0]) for r in rows]; prices=[float(r[1]) for r in rows]
-            # 3 feature windows x 4 forecast horizons x 2 styles = 24 combinations.
-            windows=(1440,4320,10080)  # 1d, 3d, 7d
-            horizons=(60,180,360,1440) # 1h, 3h, 6h, 24h
-            styles=('short','long')
-            for window_minutes in windows:
-                for horizon_minutes in horizons:
-                    for style in styles:
+            # Backtest every configured live-model window/horizon/style combination.
+            # The canonical model registry currently defines 104 combinations.
+            combinations=COMBINATIONS
+            for style,window_minutes,horizon_minutes in combinations:
                         run_id=uuid.uuid4()
                         config=dict(style=style,window_minutes=window_minutes,horizon_minutes=horizon_minutes,
                             fee_bps=10,slippage_bps=5,initial_capital=10000,max_folds=max_folds,
                             lookback_days=lookback_days,execution='decision-close to exact-horizon close',
-                            combination_count=len(windows)*len(horizons)*len(styles))
+                            combination_count=len(combinations))
                         conn.execute("insert into stock_engine.ml_backtest_runs(run_id,stock_id,status,config,source_commit) values(%s,%s,'running',%s,%s)",
                             (run_id,stock,Jsonb(config),os.getenv('GITHUB_SHA')))
                         result=run_backtest(times,prices,window_minutes=window_minutes,
