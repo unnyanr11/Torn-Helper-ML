@@ -1,11 +1,19 @@
 import unittest
 import numpy as np
-from backtesting import run_backtest, calibration_from_backtest, MODEL_FAMILIES
+from backtesting import run_backtest, calibration_from_backtest, MODEL_FAMILIES, _family_predict
 from realtime_model import train_range, RIDGE_ALPHAS, COMBINATIONS
 
 class BacktestTests(unittest.TestCase):
     def test_model_family_matrix_includes_baselines_trees_and_ensemble(self):
         self.assertEqual(set(MODEL_FAMILIES), {'ridge','elastic_net','random_forest','extra_trees','hist_gradient_boosting','ensemble'})
+
+    def test_each_model_family_returns_finite_predictions(self):
+        rng=np.random.default_rng(11)
+        x=rng.normal(size=(80,8)); y=rng.normal(0,.01,size=80); x_eval=rng.normal(size=(5,8))
+        for family in MODEL_FAMILIES:
+            prediction=_family_predict(family,x,y,x_eval)
+            self.assertEqual(prediction.shape,(5,))
+            self.assertTrue(np.all(np.isfinite(prediction)))
 
     def test_backtest_matrix_covers_all_registered_live_combinations(self):
         self.assertEqual(len(COMBINATIONS),104)
