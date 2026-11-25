@@ -18,7 +18,7 @@ Each bounded GitHub Actions run:
 3. Checks matured forecast outcomes against exact observed prices.
 4. Retrains models when at least 10 minutes have elapsed since successful
    training; calibration is reconsidered every 3 hours.
-5. Produces and stores the 104 configured stock/window/horizon forecasts.
+5. Produces and stores the 72 configured short-term stock/window/horizon forecasts.
 6. Updates each shard's health heartbeat and processing metrics.
 
 Training and calibration due times are stored in each shard's
@@ -67,8 +67,9 @@ is isolated in `stock_engine`; this repository does not change RLS policies.
 
 ## Model and safety behavior
 
-- The live model registry contains 104 combinations: 12 short windows x 6
-  short horizons, plus 8 long windows x 4 long horizons.
+- The live model registry contains 72 short-term combinations: 12 analysis
+  windows x 6 forecast horizons. Long-term analysis is handled exclusively by
+  the separate `LongTerm-Torn-Helper-ML` repository.
 - The adaptive linear model selects Ridge, ElasticNet or a Ridge/ElasticNet
   blend using chronological validation with horizon purging.
 - Forecasts that fail validation, lack sufficient history, have stale prices,
@@ -98,9 +99,9 @@ independent job for each of the 35 stocks, with up to eight stock jobs running
 concurrently and fail-fast disabled so one stock's failure does not cancel the
 others.
 
-Each stock tests all 104 live registry window/horizon combinations (12 short
-windows x 6 short horizons, plus 8 long windows x 4 long horizons) across all
-six supported backtest model families. The scheduled defaults use 180 days of
+Each stock tests all 72 live short-term registry window/horizon combinations
+(12 analysis windows x 6 forecast horizons) across all six supported backtest
+model families. The scheduled defaults use 180 days of
 history, all eligible out-of-sample history currently available in each shard
 (up to the 180-day retention limit), and up to 30 walk-forward folds per
 configuration. Forecast configurations are limited to the short-term registry; long-term forecasting is maintained in the dedicated repository.
