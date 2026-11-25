@@ -107,7 +107,8 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
         signal='Buy' if approved and final_prediction>0 else 'Sell' if approved and final_prediction<0 else 'Wait'
         predictions.append(dict(origin_minute=origin,target_minute=origin+horizon_minutes,
             origin_price=current,actual_price=future,predicted_return=final_prediction,
-            raw_return=final_prediction,actual_return=actual,signal=signal,
+            raw_return=final_prediction,actual_return=actual,
+            predicted_price=current*(1.0+final_prediction),signal=signal,
             model_id=model_family,model_family=model_family,validation_mae=validation_mae,
             validation_baseline_mae=baseline,approved=approved))
         side=1.0 if signal=='Buy' else 0.0
@@ -122,6 +123,8 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
     actuals=[p['actual_return'] for p in predictions]
     errors=[p['actual_return']-p['predicted_return'] for p in predictions]
     trade_returns=[t['net_return'] for t in trades]
+    price_errors=[p['predicted_price']-p['actual_price'] for p in predictions]
+    directional=[(p['predicted_return']>=0)==(p['actual_return']>=0) for p in predictions]
     wins=sum(r>0 for r in trade_returns); losses=sum(r<0 for r in trade_returns)
     sharpe=float(np.mean(trade_returns)/np.std(trade_returns,ddof=1)) if len(trade_returns)>1 and np.std(trade_returns,ddof=1)>0 else None
     return dict(status='completed' if predictions else 'insufficient_history',
