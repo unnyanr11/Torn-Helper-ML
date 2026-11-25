@@ -12,8 +12,11 @@ and store results/calibration in the assigned Supabase stock shards.
   final untouched validation window, with a forecast-horizon purge between them.
 - A GitHub Actions job runs every two hours against actual stored prices. Each stock is evaluated across all 104 configurations defined by the live
   model registry: 12 short-style windows x 6 short horizons, plus 8 long-style
-  windows x 4 long horizons. Each configuration uses up to 3 non-overlapping
-  evaluation folds per stock to keep the two-hour workload bounded.
+  windows x 4 long horizons. Each configuration is compared across six families: the existing Ridge
+  baseline, Elastic Net, Random Forest, Extra Trees, Histogram Gradient
+  Boosting, and a median ensemble. The default is two non-overlapping
+  evaluation folds per family/configuration; the scheduled job has a six-hour
+  ceiling, so actual coverage and completion must be confirmed from run logs.
 - Backtest results, prediction outcomes, trade assumptions and calibration
   candidates are written to private `stock_engine` tables.
 - A calibration candidate is not promoted based on backtest results alone. It
@@ -38,8 +41,10 @@ and store results/calibration in the assigned Supabase stock shards.
    daily schedule.
 
 The scheduled workflow can be manually dispatched for a selected set of stock
-IDs or a 30-180 day lookback. The default workload is capped at 3 folds per
-configuration to keep the 24-combination run bounded.
+IDs or a 30-180 day lookback. The default workload is capped at 2 folds per family/configuration. The
+comparison writes metrics for all families, but only the existing Ridge
+family is eligible for live calibration promotion until alternative models
+are explicitly integrated into the live prediction worker.
 
 ## Backtesting assumptions and limitations
 
@@ -53,11 +58,11 @@ candidate rather than a forced calibration.
 Backtesting is research, not proof of profitability. The backtest calibration
 candidate is fitted on a chronological subset and checked on a later holdout;
 promotion additionally requires independent matured live forward outcomes.
-The matrix covers every configured feature-window/horizon/style combination,
-but still uses the Ridge model family with nested alpha selection; it does not
-yet compare fundamentally different algorithm families such as random forests
-or gradient boosting. A broader family comparison should be added only with
-equivalent leakage-safe selection and holdout validation.
+Model-family results are evaluated with chronological, purged training/validation
+splits. The ensemble is a median of candidate-family forecasts. Historical
+performance is not proof of future profitability; promotion must be based on
+matured forward outcomes. Alternative model families are recorded for
+comparison but are not automatically deployed to the live predictor.
 
 ## Tests
 
