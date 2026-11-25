@@ -31,7 +31,15 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           sleep 300
+          # GitHub's dispatch endpoint can transiently return 5xx responses.
+          # Retry network/server failures rather than failing the entire timer job.
           curl --fail-with-body --silent --show-error \
+            --retry 5 \
+            --retry-all-errors \
+            --retry-delay 5 \
+            --retry-max-time 90 \
+            --connect-timeout 15 \
+            --max-time 30 \
             --request POST \
             --header "Authorization: Bearer $GH_TOKEN" \
             --header "Accept: application/vnd.github+json" \
