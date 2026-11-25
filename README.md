@@ -150,9 +150,15 @@ configuration's sample count, MAE, RMSE, zero-return baseline MAE, directional
 accuracy, mean error and available trade results.
 
 A configuration is eligible for ranking only when it has at least 30
-out-of-sample predictions and its MAE improves on the zero-return baseline by
-at least 2%. The report records the strongest eligible model per stock and
-per stock/window/horizon configuration, as well as all evaluated rankings.
+out-of-sample predictions, at least five trades, positive net compounded
+return, profit factor above 1.0, maximum drawdown no greater than 15%, and MAE
+improves on the zero-return baseline by at least 2%. Eligible models are ranked
+by net total return divided by the larger of absolute maximum drawdown or 1%,
+then by profit factor, MAE improvement and directional accuracy. Models with
+no trades, negative net returns or excessive drawdown are rejected rather than
+being rewarded for low drawdown alone. The report records the strongest
+eligible model per stock and per stock/window/horizon configuration, as well
+as all evaluated rankings and risk metrics.
 Insufficient samples and baseline underperformance are not presented as
 successful models. These rankings are research outputs only: they do not
 change the live predictor or automatically promote non-Ridge model families.
