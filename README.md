@@ -82,19 +82,33 @@ The prediction worker is not a guarantee of profitability. Forecasts are
 estimates, not financial advice, and actual execution prices, spreads and
 liquidity may differ from stored closes.
 
-## Backtesting (manual-only for now)
+## Backtesting (automatic every three hours)
 
-Historical walk-forward comparisons are intentionally paused from automatic
-scheduling while the five-minute prediction pipeline is stabilized. Run
-`.github/workflows/backtest.yml` manually when needed. The screening matrix
-uses 12 representative short-style window/horizon combinations and three
-model families, with a default maximum of 20 folds. It evaluates the most
-recent 15 days out of sample using up to 180 days of history.
+`.github/workflows/backtest.yml` runs the complete backtest matrix every
+three hours (UTC), and can also be started manually. A unit-test job runs once
+before the stock matrix begins. The matrix contains one independent job for
+each of the 35 stocks, with up to eight stock jobs running concurrently and
+fail-fast disabled so one stock's failure does not cancel the others.
 
-Backtest outputs use separate `stock_engine.ml_backtest_*` tables. Only the
-Ridge-compatible calibration path can be considered for live promotion, and
-only after independent matured live-forward validation. Alternative model
-families remain comparison-only.
+Each stock tests all 104 live registry window/horizon combinations (12 short
+windows x 6 short horizons, plus 8 long windows x 4 long horizons) across all
+six supported backtest model families. The scheduled defaults use 180 days of
+history, a 30-day out-of-sample evaluation period and up to 120 walk-forward
+folds per configuration. Long horizons may still be skipped by the evaluator
+when the available history cannot support a valid matured sample.
+
+Backtest predictions, trades, metrics and calibration candidates are stored
+in the separate `stock_engine.ml_backtest_*` tables. Ridge-compatible
+candidates can be promoted to live calibration only after at least 30 matured
+live-forward checks and at least a 2% MAE improvement against the current
+calibration. Other model families are comparison-only and are not wired into
+the live predictor. No RLS policies are changed.
+
+Each stock job has a 165-minute timeout. The workflow allows up to eight
+concurrent stock jobs to limit database connection pressure. If a run takes
+longer than the three-hour schedule interval, GitHub's workflow-level
+concurrency setting queues the next run rather than running two full batches
+at once.
 
 Before running backtests, install `python/stock_ml/backtest_setup.sql` in each
 shard after the live prediction schema is present. This creates isolated
