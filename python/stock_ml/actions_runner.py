@@ -50,7 +50,11 @@ def is_due(previous, seconds, now=None):
 def process(project,dsn,force_train=False,force_calibrate=False):
     with project_connection(connect,dsn) as conn:
         if not conn.execute('select pg_try_advisory_lock(%s,%s)',(74183000,project)).fetchone()[0]:
-            raise ValueError('Another worker owns the project lease')
+            # Scheduled cycles may overlap. Another run already owns this shard,
+            # so skip it cleanly rather than failing the whole workflow.
+            print(json.dumps(dict(event='project_skipped',project=project,
+                reason='another_prediction_run_owns_project_lease')),flush=True)
+            return
         assignment=conn.execute('select project_number,enabled from stock_engine.settings where singleton').fetchone()
         if not assignment or assignment[0]!=project:
             raise ValueError('Project assignment mismatch')
