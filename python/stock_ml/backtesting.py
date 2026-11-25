@@ -109,7 +109,9 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
         current=float(exact(times,prices,[origin])[0])
         if not math.isfinite(future) or not math.isfinite(current): continue
         actual=future/current-1.0
-        signal='Buy' if approved and final_prediction>required_gross_return else 'Sell' if approved and final_prediction < -required_gross_return else 'Wait'
+        signal = (result.get('signal', 'Wait') if model_family == 'ridge' else
+                  ('Buy' if approved and final_prediction > required_gross_return else
+                   'Sell' if approved and final_prediction < -required_gross_return else 'Wait'))
         predictions.append(dict(origin_minute=origin,target_minute=origin+horizon_minutes,
             origin_price=current,actual_price=future,predicted_return=final_prediction,
             raw_return=final_prediction,actual_return=actual,
