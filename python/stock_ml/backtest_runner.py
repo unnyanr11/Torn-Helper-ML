@@ -64,7 +64,10 @@ def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds):
                 from stock_engine.prices where stock_id=%s and observed_at>=now()-(%s * interval '1 day')
                 group by 1 order by 1""",(stock,lookback_days)).fetchall()
             if len(rows)<1000: print(f"stock {stock}: insufficient raw observations"); continue
-            times=[int(r[0]) for r in rows]; prices=[float(r[1]) for r in rows]\n            # Reserve the most recent evaluation_days for out-of-sample forecasts.\n            # Each fold trains only on observations strictly before its own origin.\n            evaluation_start=int(times[-1]-evaluation_days*1440)
+            times=[int(r[0]) for r in rows]; prices=[float(r[1]) for r in rows]
+            # Reserve the most recent evaluation_days for out-of-sample forecasts.
+            # Each fold trains only on observations strictly before its own origin.
+            evaluation_start=int(times[-1]-evaluation_days*1440)
             # Backtest every configured live-model window/horizon/style combination.
             # The canonical model registry currently defines 104 combinations.
             combinations=COMBINATIONS
@@ -73,14 +76,17 @@ def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds):
                         run_id=uuid.uuid4()
                         config=dict(style=style,window_minutes=window_minutes,horizon_minutes=horizon_minutes,
                             fee_bps=10,slippage_bps=5,initial_capital=10000,max_folds=max_folds,
-                            lookback_days=lookback_days,evaluation_days=evaluation_days,\n                            evaluation_start_minute=evaluation_start,\n                            execution='decision-close to exact-horizon close',
+                            lookback_days=lookback_days,evaluation_days=evaluation_days,
+                            evaluation_start_minute=evaluation_start,
+                            execution='decision-close to exact-horizon close',
                             combination_count=len(combinations),model_family=model_family)
                         conn.execute("insert into stock_engine.ml_backtest_runs(run_id,stock_id,status,config,source_commit) values(%s,%s,'running',%s,%s)",
                             (run_id,stock,Jsonb(config),os.getenv('GITHUB_SHA')))
                         result=run_backtest(times,prices,window_minutes=window_minutes,
                             horizon_minutes=horizon_minutes,style=style,fee_bps=config['fee_bps'],
                             slippage_bps=config['slippage_bps'],initial_capital=config['initial_capital'],
-                            max_folds=max_folds,model_family=model_family,\n                            evaluation_start_minute=evaluation_start)
+                            max_folds=max_folds,model_family=model_family,
+                            evaluation_start_minute=evaluation_start)
                         with conn.transaction():
                             conn.execute("update stock_engine.ml_backtest_runs set status=%s,metrics=%s where run_id=%s",
                                 (result['status'],Jsonb(result['metrics']),run_id))
@@ -110,8 +116,10 @@ def main():
     if not projects: raise SystemExit('Configure STOCK_ML_PROJECTS_JSON in repository secrets')
     requested={int(x) for x in os.getenv('STOCK_IDS','').split(',') if x.strip()}
     if requested and (min(requested)<1 or max(requested)>35): raise SystemExit('STOCK_IDS must be between 1 and 35')
-    days=int(os.getenv('LOOKBACK_DAYS','180')); folds=int(os.getenv('MAX_FOLDS','60'))
-    if not 30<=days<=180 or not 1<=folds<=500: raise SystemExit('lookback_days must be 30-180 and max_folds 10-500')
+    days=int(os.getenv('LOOKBACK_DAYS','180')); evaluation_days=int(os.getenv('EVALUATION_DAYS','15'))
+    folds=int(os.getenv('MAX_FOLDS','60'))
+    if not 30<=days<=180 or not 1<=evaluation_days<=30 or evaluation_days>=days or not 1<=folds<=500:
+        raise SystemExit('lookback_days must be 30-180, evaluation_days 1-30 and less than lookback_days, max_folds 1-500')
     failed=False
     for n,dsn in projects.items():
         project=int(n)
