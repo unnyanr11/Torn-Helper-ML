@@ -5,7 +5,7 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import Ridge, ElasticNet
 from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor, HistGradientBoostingRegressor
-from realtime_model import exact, feature_matrix, prepare_series, validate_series, train_range, make_result
+from realtime_model import exact, feature_matrix, prepare_series, validate_series, train_range, make_result, MIN_EXPECTED_NET_RETURN
 
 MODEL_FAMILIES=('ridge','elastic_net','random_forest','extra_trees','hist_gradient_boosting','ensemble')
 BASE_FAMILIES=MODEL_FAMILIES[:-1]
@@ -48,7 +48,8 @@ def _metrics(values):
 
 def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='short',
                  fee_bps=10.0,slippage_bps=5.0,initial_capital=10000.0,
-                 max_folds=120,min_train_rows=200,trade_on='signal',model_family='ridge',evaluation_start_minute=None):
+                 max_folds=120,min_train_rows=200,trade_on='signal',model_family='ridge',evaluation_start_minute=None,
+                 minimum_net_return=None):
     times,prices=validate_series(times,prices)
     if style != 'short' or window_minutes<15 or horizon_minutes<15 or model_family not in MODEL_FAMILIES:
         raise ValueError('Invalid model style, window, horizon or model family')
@@ -67,6 +68,10 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
             non_overlapping.append(int(candidate)); last_exit=int(candidate)+horizon_minutes
     predictions=[]; trades=[]; equity=float(initial_capital); peak=equity; max_dd=0.0
     cost=(fee_bps+slippage_bps)*2/10000.0
+    minimum_net = MIN_EXPECTED_NET_RETURN if minimum_net_return is None else float(minimum_net_return)
+    if minimum_net < 0:
+        raise ValueError('minimum_net_return must be non-negative')
+    required_gross_return = cost + minimum_net
     for origin in non_overlapping:
         end=int(np.searchsorted(times,origin,side='right'))
         train_t,train_p=times[:end],prices[:end]
@@ -77,7 +82,7 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
         if model_family=='ridge':
             fitted=train_range(train_t,train_p,style,window_minutes,[horizon_minutes],prepared).get(horizon_minutes,{})
             if fitted.get('status')!='ready': continue
-            result=make_result(fitted,None,x[0],True)
+            result=make_result(fitted,None,x[0],True,minimum_net_return=minimum_net,estimated_trading_cost=cost)
             validation_mae=float(fitted['metrics']['mae'])
             baseline=float(fitted['metrics']['baseline_mae'])
             approved=bool(fitted['metrics']['approved'])
@@ -104,7 +109,7 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
         current=float(exact(times,prices,[origin])[0])
         if not math.isfinite(future) or not math.isfinite(current): continue
         actual=future/current-1.0
-        signal='Buy' if approved and final_prediction>0 else 'Sell' if approved and final_prediction<0 else 'Wait'
+        signal='Buy' if approved and final_prediction>required_gross_return else 'Sell' if approved and final_prediction < -required_gross_return else 'Wait'
         predictions.append(dict(origin_minute=origin,target_minute=origin+horizon_minutes,
             origin_price=current,actual_price=future,predicted_return=final_prediction,
             raw_return=final_prediction,actual_return=actual,
@@ -131,6 +136,7 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
         config=dict(style=style,window_minutes=window_minutes,horizon_minutes=horizon_minutes,
             model_family=model_family,evaluation_start_minute=(int(evaluation_start_minute) if evaluation_start_minute is not None else None),
             fee_bps=fee_bps,slippage_bps=slippage_bps,
+            minimum_net_return=minimum_net,required_gross_return=required_gross_return,
             initial_capital=initial_capital,execution='decision-close to exact-horizon close',trade_on=trade_on),
         metrics=dict(folds=len(predictions),trades=len(trades),total_return=equity/initial_capital-1.0,
             final_capital=equity,win_rate=wins/len(trades) if trades else None,wins=wins,losses=losses,
