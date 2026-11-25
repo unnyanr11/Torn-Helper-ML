@@ -74,9 +74,8 @@ def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds):
             # Reserve the most recent evaluation_days for out-of-sample forecasts.
             # Each fold trains only on observations strictly before its own origin.
             evaluation_start=int(times[-1]-evaluation_days*1440)
-            # Screen a compact, representative set. Long (7-28 day) horizons
-            # cannot mature reliably inside a 15-day evaluation period, so they
-            # are intentionally excluded from this run.
+            # Evaluate all live combinations; a full 30-day holdout gives
+            # long (7-28 day) horizons time to mature.
             combinations=BACKTEST_COMBINATIONS
             for style,window_minutes,horizon_minutes in combinations:
               for model_family in BACKTEST_MODEL_FAMILIES:
@@ -135,8 +134,8 @@ def main():
     if not projects: raise SystemExit('Configure STOCK_ML_PROJECTS_JSON in repository secrets')
     requested={int(x) for x in os.getenv('STOCK_IDS','').split(',') if x.strip()}
     if requested and (min(requested)<1 or max(requested)>35): raise SystemExit('STOCK_IDS must be between 1 and 35')
-    days=int(os.getenv('LOOKBACK_DAYS','180')); evaluation_days=int(os.getenv('EVALUATION_DAYS','15'))
-    folds=int(os.getenv('MAX_FOLDS','60'))
+    days=int(os.getenv('LOOKBACK_DAYS','180')); evaluation_days=int(os.getenv('EVALUATION_DAYS','30'))
+    folds=int(os.getenv('MAX_FOLDS','120'))
     if not 30<=days<=180 or not 1<=evaluation_days<=30 or evaluation_days>=days or not 1<=folds<=500:
         raise SystemExit('lookback_days must be 30-180, evaluation_days 1-30 and less than lookback_days, max_folds 1-500')
     failed=False
