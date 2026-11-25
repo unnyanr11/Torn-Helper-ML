@@ -1,5 +1,5 @@
 """Run walk-forward backtests against each configured shard's observed prices."""
-import json, os, sys, uuid
+import json, os, sys, uuid, traceback
 import psycopg
 import numpy as np
 from psycopg.types.json import Jsonb
@@ -90,16 +90,17 @@ def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds):
                         with conn.transaction():
                             conn.execute("update stock_engine.ml_backtest_runs set status=%s,metrics=%s where run_id=%s",
                                 (result['status'],Jsonb(result['metrics']),run_id))
-                            conn.executemany("""insert into stock_engine.ml_backtest_predictions
-                                (run_id,origin_at,target_at,origin_price,actual_price,raw_return,predicted_return,actual_return,signal,model_id)
-                                values(%s,to_timestamp(%s*60),to_timestamp(%s*60),%s,%s,%s,%s,%s,%s,%s)""",
-                                [(run_id,p['origin_minute'],p['target_minute'],p['origin_price'],p['actual_price'],
-                                  p['raw_return'],p['predicted_return'],p['actual_return'],p['signal'],p['model_id']) for p in result['predictions']])
-                            conn.executemany("""insert into stock_engine.ml_backtest_trades
-                                (run_id,origin_at,exit_at,side,entry_price,exit_price,gross_return,net_return,capital_before,capital_after)
-                                values(%s,to_timestamp(%s*60),to_timestamp(%s*60),%s,%s,%s,%s,%s,%s,%s)""",
-                                [(run_id,t['origin_minute'],t['exit_minute'],t['side'],t['entry_price'],t['exit_price'],
-                                  t['gross_return'],t['net_return'],t['capital_before'],t['capital_after']) for t in result['trades']])
+                            with conn.cursor() as cursor:
+                                cursor.executemany("""insert into stock_engine.ml_backtest_predictions
+                                    (run_id,origin_at,target_at,origin_price,actual_price,raw_return,predicted_return,actual_return,signal,model_id)
+                                    values(%s,to_timestamp(%s*60),to_timestamp(%s*60),%s,%s,%s,%s,%s,%s,%s)""",
+                                    [(run_id,p['origin_minute'],p['target_minute'],p['origin_price'],p['actual_price'],
+                                      p['raw_return'],p['predicted_return'],p['actual_return'],p['signal'],p['model_id']) for p in result['predictions']])
+                                cursor.executemany("""insert into stock_engine.ml_backtest_trades
+                                    (run_id,origin_at,exit_at,side,entry_price,exit_price,gross_return,net_return,capital_before,capital_after)
+                                    values(%s,to_timestamp(%s*60),to_timestamp(%s*60),%s,%s,%s,%s,%s,%s,%s)""",
+                                    [(run_id,t['origin_minute'],t['exit_minute'],t['side'],t['entry_price'],t['exit_price'],
+                                      t['gross_return'],t['net_return'],t['capital_before'],t['capital_after']) for t in result['trades']])
                             candidate=calibration_from_backtest(result['predictions'])
                             conn.execute("""insert into stock_engine.ml_backtest_calibration_candidates(run_id,candidate)
                                 values(%s,%s)""",(run_id,Jsonb(candidate)))
@@ -124,7 +125,9 @@ def main():
     for n,dsn in projects.items():
         project=int(n)
         try: process(project,dsn,requested,days,evaluation_days,folds)
-        except Exception as exc:
-            failed=True; print(f"shard {project} failed: {type(exc).__name__}",file=sys.stderr)
+        except Exception:
+            failed=True
+            print(f"Shard {project} failed; full traceback follows:",file=sys.stderr)
+            traceback.print_exc()
     return int(failed)
 if __name__=='__main__': sys.exit(main())
