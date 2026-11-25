@@ -50,21 +50,24 @@ def rank_rows(rows):
             trades=trades,win_rate=(float(win_rate) if win_rate is not None else None),
             max_drawdown=max_drawdown,profit_factor=profit_factor,
             risk_adjusted_score=risk_adjusted_score,eligible=eligible))
+    def quality_key(item):
+        return (not item['eligible'],
+                -(item['risk_adjusted_score'] if item['risk_adjusted_score'] is not None else -1e9),
+                -(item['profit_factor'] if item['profit_factor'] is not None else -1e9),
+                -(item['mae_improvement_pct'] or -1e9),
+                -(item['directional_accuracy'] or 0), item['rmse'])
     evaluated.sort(key=lambda x: (
         x['stock_id'], x['style'], x['window_minutes'], x['horizon_minutes'],
-        not x['eligible'], -(x['risk_adjusted_score'] if x['risk_adjusted_score'] is not None else -1e9),
-        -(x['profit_factor'] if x['profit_factor'] is not None else -1e9),
-        -(x['mae_improvement_pct'] or -1e9), -(x['directional_accuracy'] or 0), x['rmse']))
+        *quality_key(x)))
     eligible=[x for x in evaluated if x['eligible']]
     best_by_stock={}
     best_by_configuration={}
-    for item in eligible:
-        stock=item['stock_id']
-        if stock not in best_by_stock:
-            best_by_stock[stock]=item
-        key=(stock,item['style'],item['window_minutes'],item['horizon_minutes'])
-        if key not in best_by_configuration:
-            best_by_configuration[key]=item
+    for item in sorted(eligible,key=lambda x:(x['stock_id'],*quality_key(x))):
+        best_by_stock.setdefault(item['stock_id'],item)
+    for item in sorted(eligible,key=lambda x:(
+            x['stock_id'],x['style'],x['window_minutes'],x['horizon_minutes'],*quality_key(x))):
+        key=(item['stock_id'],item['style'],item['window_minutes'],item['horizon_minutes'])
+        best_by_configuration.setdefault(key,item)
     return dict(
         lookback_hours=LOOKBACK_HOURS, minimum_samples=MIN_SAMPLES,
         minimum_mae_improvement_pct=MIN_IMPROVEMENT*100,
