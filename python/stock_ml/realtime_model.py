@@ -151,6 +151,42 @@ def train_range(times, prices, style, window, horizons, prepared=None):
                                model_family=selected_family)
     return result
 
+def baseline_forecast(times, prices, origin, window, horizon):
+    """Unvalidated trend fallback: forecasts from the selected real-price window only."""
+    times, prices = validate_series(times, prices)
+    left = np.searchsorted(times, origin - window, side='right')
+    right = np.searchsorted(times, origin, side='right')
+    sample_t, sample_p = times[left:right], prices[left:right]
+    required = int(np.ceil(window * .95))
+    if (len(sample_t) < required or not len(sample_t) or
+            sample_t[0] > origin - window + max(1, window // 100)):
+        return dict(status='insufficient_history', signal='Wait',
+                    reason='Selected input window is incomplete')
+    x = (sample_t - origin).astype(np.float64)
+    y = np.log(sample_p)
+    x_mean = float(np.mean(x))
+    y_mean = float(np.mean(y))
+    denom = float(np.sum((x - x_mean) ** 2))
+    if denom <= 0:
+        return dict(status='unavailable', signal='Wait',
+                    reason='Not enough distinct timestamps for baseline forecast')
+    slope = float(np.sum((x - x_mean) * (y - y_mean)) / denom)
+    intercept = y_mean - slope * x_mean
+    residuals = y - (intercept + slope * x)
+    residual_q90 = float(np.quantile(np.abs(residuals), .90))
+    predicted_return = float(np.expm1(np.clip(slope * horizon, -0.405465, 0.405465)))
+    uncertainty = float(min(.5, max(.003, residual_q90 * np.sqrt(1 + horizon / max(window, 1)))))
+    if not np.isfinite(predicted_return) or not np.isfinite(uncertainty):
+        return dict(status='unavailable', signal='Wait',
+                    reason='Baseline forecast is numerically unstable')
+    return dict(status='ready', signal='Wait', predicted_return=predicted_return,
+                raw_return=predicted_return, error_q90=uncertainty,
+                forecast_method='unvalidated_linear_trend',
+                model_id=None, calibrated=False, calibration_samples=0,
+                training_status='insufficient_history',
+                training_reason='A validated ML model is not available; showing a trend-only fallback',
+                validation=None)
+
 def calibrate(rows):
     if len(rows)<20: return dict(scale=1.,bias=0.,error_q90=None,samples=len(rows),active=False)
     data=np.asarray(rows,dtype=float); raw,actual=data[:,0],data[:,1]; split=int(len(data)*.7)
