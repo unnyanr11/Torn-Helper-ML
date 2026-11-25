@@ -42,48 +42,113 @@ def feature_matrix(times,prices,origins,window,prepared=None):
 def infer(parameters,x):
     return ((np.asarray(x)-np.asarray(parameters['mean']))/np.asarray(parameters['scale']))@np.asarray(parameters['coef'])+parameters['intercept']
 
-def train_range(times,prices,style,window,horizons,prepared=None):
-    """Nested chronological selection, purged by forecast horizon; final holdout is untouched."""
-    from sklearn.linear_model import Ridge
+def train_range(times, prices, style, window, horizons, prepared=None):
+    """Select Ridge, ElasticNet or their linear blend on chronological validation.
+
+    Export remains one standardized linear model, preserving the browser/Python
+    inference contract and the existing forecast response shape.
+    """
+    from sklearn.linear_model import Ridge, ElasticNet
     from sklearn.preprocessing import StandardScaler
-    times,prices=validate_series(times,prices); stride=15 if style=='short' else 60; origins=times[times%stride==0]
-    if len(origins)>3000: origins=origins[np.linspace(0,len(origins)-1,3000).astype(int)]
-    x,complete=feature_matrix(times,prices,origins,window,prepared); origins,x=origins[complete],x[complete]; result={}
+    times, prices = validate_series(times, prices)
+    stride = 15 if style == 'short' else 60
+    origins = times[times % stride == 0]
+    if len(origins) > 3000:
+        origins = origins[np.linspace(0, len(origins) - 1, 3000).astype(int)]
+    x, complete = feature_matrix(times, prices, origins, window, prepared)
+    origins, x = origins[complete], x[complete]
+    result = {}
+
+    def fit_candidate(family, alpha, design, target):
+        if family == 'elastic_net':
+            estimator = ElasticNet(alpha=alpha, l1_ratio=.25, max_iter=5000,
+                                   selection='cyclic', tol=1e-5)
+        else:
+            estimator = Ridge(alpha=alpha)
+        estimator.fit(design, target)
+        return estimator
+
     for horizon in horizons:
-        future=exact(times,prices,origins+horizon); matured=np.isfinite(future); t,design=origins[matured],x[matured]; y=future[matured]/exact(times,prices,t)-1
-        if len(t)<240:
-            result[horizon]={'status':'insufficient_history','reason':'Need 240 matured examples for nested validation'}; continue
-        boundary_select=t[int(len(t)*.60)]; boundary_test=t[int(len(t)*.75)]
-        train=t+horizon<boundary_select
-        select=(t>=boundary_select)&(t+horizon<boundary_test)
-        test=t>=boundary_test
-        if train.sum()<100 or select.sum()<30 or test.sum()<50:
-            result[horizon]={'status':'insufficient_history','reason':'Not enough rows after nested horizon purges'}; continue
-        scaler=StandardScaler().fit(design[train]); z_train=scaler.transform(design[train]); z_select=scaler.transform(design[select])
-        alpha_scores=[]
-        for alpha in RIDGE_ALPHAS:
-            candidate=Ridge(alpha=alpha).fit(z_train,y[train])
-            score=float(np.mean(np.abs(y[select]-candidate.predict(z_select))))
-            alpha_scores.append((score,alpha))
-        selected_alpha=min(alpha_scores,key=lambda item:(item[0],item[1]))[1]
-        # Final untouched test evaluates the selected alpha, never selects it.
-        fit_before_test=t+horizon<boundary_test
-        final_scaler=StandardScaler().fit(design[fit_before_test])
-        final_model=Ridge(alpha=selected_alpha).fit(final_scaler.transform(design[fit_before_test]),y[fit_before_test])
-        test_prediction=final_model.predict(final_scaler.transform(design[test]))
-        error=y[test]-test_prediction
-        mae,baseline=float(np.mean(abs(error))),float(np.mean(abs(y[test])))
-        q90=float(np.quantile(abs(error),.9))
-        metrics=dict(mae=mae,baseline_mae=baseline,error_q90=q90,
-            training_rows=int(train.sum()),selection_rows=int(select.sum()),validation_rows=int(test.sum()),
-            selected_alpha=selected_alpha,alpha_selection_mae=float(min(alpha_scores)[0]),
-            last_training_target=int((t[fit_before_test]+horizon).max()),
-            first_validation_origin=int(boundary_test),approved=bool(baseline>0 and mae<baseline*.98))
-        # Refit selected model on every matured example for live inference.
-        scaler=StandardScaler().fit(design); model=Ridge(alpha=selected_alpha).fit(scaler.transform(design),y)
-        parameters=dict(mean=scaler.mean_.tolist(),scale=scaler.scale_.tolist(),coef=model.coef_.tolist(),intercept=float(model.intercept_))
-        model_id=hashlib.sha256(json.dumps(dict(parameters=parameters,alpha=selected_alpha),sort_keys=True).encode()).hexdigest()[:20]
-        result[horizon]=dict(status='ready',parameters=parameters,metrics=metrics,model_id=model_id,trained_through=int(times[-1]))
+        future = exact(times, prices, origins + horizon)
+        matured = np.isfinite(future)
+        t, design = origins[matured], x[matured]
+        y = future[matured] / exact(times, prices, t) - 1
+        if len(t) < 240:
+            result[horizon] = {'status': 'insufficient_history',
+                               'reason': 'Need 240 matured examples for nested model selection'}
+            continue
+        boundary_select = t[int(len(t) * .60)]
+        boundary_test = t[int(len(t) * .75)]
+        train = t + horizon < boundary_select
+        select = (t >= boundary_select) & (t + horizon < boundary_test)
+        test = t >= boundary_test
+        if train.sum() < 100 or select.sum() < 30 or test.sum() < 50:
+            result[horizon] = {'status': 'insufficient_history',
+                               'reason': 'Not enough rows after nested horizon purges'}
+            continue
+
+        selection_scaler = StandardScaler().fit(design[train])
+        z_train = selection_scaler.transform(design[train])
+        z_select = selection_scaler.transform(design[select])
+        candidates = [('ridge', alpha) for alpha in RIDGE_ALPHAS]
+        candidates += [('elastic_net', alpha) for alpha in (.00005, .0001, .0005, .001)]
+        fitted, scores = {}, {}
+        for family, alpha in candidates:
+            key = (family, alpha)
+            fitted[key] = fit_candidate(family, alpha, z_train, y[train])
+            scores[key] = float(np.mean(np.abs(y[select] - fitted[key].predict(z_select))))
+
+        best_ridge = min((k for k in fitted if k[0] == 'ridge'),
+                         key=lambda k: (scores[k], k[1]))
+        best_elastic = min((k for k in fitted if k[0] == 'elastic_net'),
+                           key=lambda k: (scores[k], k[1]))
+        blend_key = ('ridge_elastic_blend', 0.0)
+        scores[blend_key] = float(np.mean(np.abs(y[select] -
+            (fitted[best_ridge].predict(z_select) + fitted[best_elastic].predict(z_select)) / 2.0)))
+        _, selected_family, selected_alpha = min(
+            ((score, key[0], key[1]) for key, score in scores.items()),
+            key=lambda item: (item[0], item[1], item[2]))
+
+        fit_before_test = t + horizon < boundary_test
+        final_scaler = StandardScaler().fit(design[fit_before_test])
+        z_fit = final_scaler.transform(design[fit_before_test])
+        z_test = final_scaler.transform(design[test])
+        if selected_family == 'ridge_elastic_blend':
+            ridge_model = fit_candidate('ridge', best_ridge[1], z_fit, y[fit_before_test])
+            elastic_model = fit_candidate('elastic_net', best_elastic[1], z_fit, y[fit_before_test])
+            test_prediction = (ridge_model.predict(z_test) + elastic_model.predict(z_test)) / 2.0
+        else:
+            final_model = fit_candidate(selected_family, selected_alpha, z_fit, y[fit_before_test])
+            test_prediction = final_model.predict(z_test)
+        error = y[test] - test_prediction
+        mae, baseline = float(np.mean(np.abs(error))), float(np.mean(np.abs(y[test])))
+        q90 = float(np.quantile(np.abs(error), .9))
+        metrics = dict(mae=mae, baseline_mae=baseline, error_q90=q90,
+                       training_rows=int(train.sum()), selection_rows=int(select.sum()),
+                       validation_rows=int(test.sum()), selected_family=selected_family,
+                       selected_alpha=float(selected_alpha), selection_mae=float(min(scores.values())),
+                       last_training_target=int((t[fit_before_test] + horizon).max()),
+                       first_validation_origin=int(boundary_test),
+                       approved=bool(baseline > 0 and mae < baseline * .98))
+
+        live_scaler = StandardScaler().fit(design)
+        z_all = live_scaler.transform(design)
+        if selected_family == 'ridge_elastic_blend':
+            ridge_live = fit_candidate('ridge', best_ridge[1], z_all, y)
+            elastic_live = fit_candidate('elastic_net', best_elastic[1], z_all, y)
+            coef = (ridge_live.coef_ + elastic_live.coef_) / 2.0
+            intercept = float((ridge_live.intercept_ + elastic_live.intercept_) / 2.0)
+        else:
+            live_model = fit_candidate(selected_family, selected_alpha, z_all, y)
+            coef, intercept = live_model.coef_, float(live_model.intercept_)
+        parameters = dict(mean=live_scaler.mean_.tolist(), scale=live_scaler.scale_.tolist(),
+                          coef=np.asarray(coef).tolist(), intercept=intercept)
+        model_id = hashlib.sha256(json.dumps(
+            dict(parameters=parameters, family=selected_family, alpha=selected_alpha),
+            sort_keys=True).encode()).hexdigest()[:20]
+        result[horizon] = dict(status='ready', parameters=parameters, metrics=metrics,
+                               model_id=model_id, trained_through=int(times[-1]),
+                               model_family=selected_family)
     return result
 
 def calibrate(rows):
