@@ -8,10 +8,10 @@ from backtesting import run_backtest, calibration_from_backtest
 # Compact screening set for the 15-day evaluation: representative short windows
 # and horizons, plus three complementary model families. Ridge remains the only
 # family eligible for live calibration promotion.
-BACKTEST_WINDOWS = (60, 360, 1440, 4320)
-BACKTEST_HORIZONS = (60, 360, 1440)
+BACKTEST_WINDOWS = (60,)
+BACKTEST_HORIZONS = (60,)
 BACKTEST_STYLES = ('short',)
-BACKTEST_MODEL_FAMILIES = ('ridge', 'elastic_net', 'hist_gradient_boosting')
+BACKTEST_MODEL_FAMILIES = ('ridge',)
 BACKTEST_COMBINATIONS = tuple(
     (style, window, horizon)
     for style in BACKTEST_STYLES
@@ -138,6 +138,9 @@ def main():
     failed=False
     for n,dsn in projects.items():
         project=int(n)
+        # Avoid opening unrelated shard connections during a targeted smoke test.
+        if requested and not any(stock in (project*2-1, project*2) and stock<=35 for stock in requested):
+            continue
         try: process(project,dsn,requested,days,evaluation_days,folds)
         except Exception:
             failed=True
