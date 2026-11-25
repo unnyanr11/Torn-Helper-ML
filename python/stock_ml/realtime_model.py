@@ -11,6 +11,10 @@ SHORT_HORIZONS = tuple(h * 60 for h in (1, 3, 6, 12, 18, 24))
 COMBINATIONS = tuple(('short', r, h)
                      for r in SHORT_RANGES for h in SHORT_HORIZONS)
 RIDGE_ALPHAS = (1.0, 10.0, 100.0, 1000.0)
+# Known stock-trading sell fee plus the user's default minimum net return.
+ESTIMATED_TRADING_COST = 0.001
+MIN_EXPECTED_NET_RETURN = 0.002
+MIN_PREDICTED_GROSS_RETURN = ESTIMATED_TRADING_COST + MIN_EXPECTED_NET_RETURN
 
 def validate_series(times, prices):
     times=np.asarray(times,dtype=np.int64); prices=np.asarray(prices,dtype=np.float64)
