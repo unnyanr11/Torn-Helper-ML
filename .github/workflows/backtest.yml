@@ -19,8 +19,8 @@ on:
         default: "120"
         type: string
   schedule:
-    # Run the complete stock/combination matrix every 3 hours (UTC).
-    - cron: "0 */3 * * *"
+    # Run the complete stock/combination matrix every 4 hours (UTC).
+    - cron: "0 */4 * * *"
 
 permissions:
   contents: read
