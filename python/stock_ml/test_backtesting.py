@@ -41,7 +41,11 @@ class BacktestTests(unittest.TestCase):
         prices=100*np.exp(np.cumsum(returns))
         result=train_range(times,prices,'short',60,[15])[15]
         self.assertEqual(result['status'],'ready')
-        self.assertIn(result['metrics']['selected_alpha'],RIDGE_ALPHAS)
+        self.assertIn(result['metrics']['selected_family'],('ridge','elastic_net','ridge_elastic_blend'))
+        if result['metrics']['selected_family']=='ridge':
+            self.assertIn(result['metrics']['selected_alpha'],RIDGE_ALPHAS)
+        else:
+            self.assertGreaterEqual(result['metrics']['selected_alpha'],0.0)
         self.assertGreaterEqual(result['metrics']['selection_rows'],30)
         self.assertGreaterEqual(result['metrics']['validation_rows'],50)
 
