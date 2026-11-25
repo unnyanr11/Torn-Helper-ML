@@ -18,9 +18,8 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: torn-helper-ml-predictions
-  cancel-in-progress: false
+# Overlapping five-minute schedules are safe: each shard uses a PostgreSQL
+# advisory lease, and a run skips any shard already being processed.
 
 jobs:
   predict:
