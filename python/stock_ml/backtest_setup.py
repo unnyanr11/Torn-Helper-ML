@@ -16,7 +16,8 @@ def statements(sql: str) -> list[str]:
 
 def provision(projects: dict[str, str]) -> None:
     sql = SCHEMA.read_text(encoding="utf-8")
-    commands = statements(sql)
+    commands = [statement for statement in statements(sql)
+                if statement.strip().lower() not in {'begin', 'commit'}]
     for project, dsn in projects.items():
         number = int(project)
         if not 1 <= number <= 18:
