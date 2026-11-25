@@ -71,18 +71,22 @@ def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds):
                 group by 1 order by 1""",(stock,lookback_days)).fetchall()
             if len(rows)<1000: print(f"stock {stock}: insufficient raw observations"); continue
             times=[int(r[0]) for r in rows]; prices=[float(r[1]) for r in rows]
-            # Reserve the most recent evaluation_days for out-of-sample forecasts.
-            # Each fold trains only on observations strictly before its own origin.
-            evaluation_start=int(times[-1]-evaluation_days*1440)
-            # Evaluate all live combinations; a full 30-day holdout gives
-            # long (7-28 day) horizons time to mature.
+            # Default to all eligible history available in this shard. Each fold
+            # trains only on observations strictly before its own origin; run_backtest
+            # also enforces the window, horizon and minimum-training requirements.
+            # An explicit positive evaluation_days value remains available for
+            # controlled experiments, but scheduled runs use 0 = all available.
+            evaluation_start=(int(times[-1]-evaluation_days*1440) if evaluation_days>0 else None)
+            available_days=max(0.0,(times[-1]-times[0])/1440.0)
             combinations=BACKTEST_COMBINATIONS
             for style,window_minutes,horizon_minutes in combinations:
               for model_family in BACKTEST_MODEL_FAMILIES:
                         run_id=uuid.uuid4()
                         config=dict(style=style,window_minutes=window_minutes,horizon_minutes=horizon_minutes,
                             fee_bps=10,slippage_bps=5,initial_capital=10000,max_folds=max_folds,
-                            lookback_days=lookback_days,evaluation_days=evaluation_days,
+                            lookback_days=lookback_days,evaluation_days=(evaluation_days or None),
+                            evaluation_mode=('all_available_after_minimum_training' if evaluation_days==0 else 'fixed_recent_window'),
+                            available_history_days=round(available_days,2),
                             evaluation_start_minute=evaluation_start,
                             execution='decision-close to exact-horizon close',
                             combination_count=len(combinations),model_family_count=len(BACKTEST_MODEL_FAMILIES),model_family=model_family)
@@ -135,8 +139,8 @@ def main():
     if requested and (min(requested)<1 or max(requested)>35): raise SystemExit('STOCK_IDS must be between 1 and 35')
     days=int(os.getenv('LOOKBACK_DAYS','180')); evaluation_days=int(os.getenv('EVALUATION_DAYS','30'))
     folds=int(os.getenv('MAX_FOLDS','120'))
-    if not 30<=days<=180 or not 1<=evaluation_days<=30 or evaluation_days>=days or not 1<=folds<=500:
-        raise SystemExit('lookback_days must be 30-180, evaluation_days 1-30 and less than lookback_days, max_folds 1-500')
+    if not 30<=days<=180 or not 0<=evaluation_days<days or not 1<=folds<=500:
+        raise SystemExit('lookback_days must be 30-180, evaluation_days 0 (all available) or a positive value less than lookback_days, max_folds 1-500')
     failed=False
     for n,dsn in projects.items():
         project=int(n)
