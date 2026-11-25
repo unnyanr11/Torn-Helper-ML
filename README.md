@@ -1,14 +1,29 @@
 # Torn-Helper ML
 
-Backend-only prediction and model-research worker for Torn-Helper. It publishes
-Python-generated forecasts to the assigned Supabase stock shards. There is no
-website backtesting interface.
+Short-term, backend-only stock prediction and model-research worker for [Torn-Helper](https://github.com/unnyanr11/Torn-Helper). This repository owns minute-based inference, training, calibration, matured-outcome checks and short-term walk-forward backtesting. It publishes results to assigned private Supabase stock shards; it does not provide a website or long-term weekly forecasts.
+
+**Long-term forecasts live in [LongTerm-Torn-Helper-ML](https://github.com/unnyanr11/LongTerm-Torn-Helper-ML).** Do not add weekly/long-horizon model logic or write long-term records into this repository's stock shards.
+
+
+## Project scope and architecture
+
+- **This repository:** short-term minute data, short-term model training/inference, calibration, forward outcome checks and short-term backtests.
+- **Main app:** [Torn-Helper](https://github.com/unnyanr11/Torn-Helper) displays forecasts and charts; it is not the training worker.
+- **Long-term worker:** [LongTerm-Torn-Helper-ML](https://github.com/unnyanr11/LongTerm-Torn-Helper-ML) owns weekly aggregation, long-horizon models and long-term backtests.
+
+The live registry contains 12 analysis windows (15 minutes, 30 minutes, 1, 2, 3, 6, 12, 18, 24, 72, 168 and 720 hours) and six horizons (1, 3, 6, 12, 18 and 24 hours): 72 combinations per stock. All 35 stocks are distributed over 18 configured stock-data projects. Projects 1–17 own two stock IDs each; project 18 owns stock 35.
+
+The feature-based linear competition compares Ridge, ElasticNet and a Ridge/ElasticNet blend over chronological training/selection/holdout periods. It purges overlapping future labels for the selected horizon, evaluates matured outcomes and retains a no-change baseline. Model selection and calibration are research controls, not a guarantee that a forecast will be profitable.
 
 ## Five-minute prediction workflow
 
-`.github/workflows/prediction.yml` runs every five minutes (at minutes
-03, 08, 13, 18, 23, 28, 33, 38, 43, 48, 53 and 58 UTC). It can also be
-started manually with optional force-training and force-calibration switches.
+`.github/workflows/prediction.yml` is started manually and then re-dispatches
+itself after a 300-second timer. This creates an approximately five-minute
+best-effort cycle, not a cron schedule or an exact service-level interval.
+GitHub queueing, job duration and dispatch latency can shift start times.
+The workflow can also be started manually with optional force-training and
+force-calibration switches; automatic re-dispatch explicitly requests
+force-training.
 
 Each bounded GitHub Actions run:
 
@@ -16,8 +31,8 @@ Each bounded GitHub Actions run:
 2. Reads new price observations, using a disposable cache containing public
    market prices only to avoid repeatedly downloading the full 180-day history.
 3. Checks matured forecast outcomes against exact observed prices.
-4. Retrains models when at least 10 minutes have elapsed since successful
-   training; calibration is reconsidered every 3 hours.
+4. Trains short-term models when due (or when force-training is requested);
+   calibration is reconsidered every 3 hours unless explicitly forced.
 5. Produces and stores the 72 configured short-term stock/window/horizon forecasts.
 6. Updates each shard's health heartbeat and processing metrics.
 
@@ -83,14 +98,13 @@ The prediction worker is not a guarantee of profitability. Forecasts are
 estimates, not financial advice, and actual execution prices, spreads and
 liquidity may differ from stored closes.
 
-## Backtesting (automatic six-hour retrigger loop)
+## Backtesting (automatic two-hour retrigger loop)
 
 `.github/workflows/backtest.yml` starts a separate retrigger job alongside the
-backtest matrix. The timer waits 5 hours 55 minutes from the retrigger job's
-start, then uses the GitHub Actions API to dispatch the next full backtest
-workflow on `main`. The workflow is started once manually; the retrigger loop
+backtest matrix. The timer waits two hours from the retrigger job's start, then uses the
+GitHub Actions API to dispatch the next full backtest workflow on `main`. The workflow is started once manually; the retrigger loop
 then continues automatically. GitHub runner queueing and dispatch latency mean
-the interval is best-effort, not an exact six-hour start-to-start guarantee.
+the interval is best-effort, not an exact two-hour start-to-start guarantee.
 The workflow no longer uses a cron schedule.
 
 The workflow requires the Actions write permission for its dispatch job. A
