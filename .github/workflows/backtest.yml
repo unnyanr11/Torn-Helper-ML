@@ -6,17 +6,17 @@ on:
       lookback_days:
         description: Historical lookback in days (30-180)
         required: true
-        default: "30"
+        default: "180"
         type: string
       evaluation_days:
         description: Out-of-sample evaluation period in days
         required: true
-        default: "5"
+        default: "30"
         type: string
       max_folds:
         description: Maximum walk-forward folds per stock
         required: true
-        default: "2"
+        default: "120"
         type: string
   schedule:
     # Run the complete 35-stock matrix every 12 hours (UTC).
@@ -53,7 +53,7 @@ jobs:
     name: Backtest stock ${{ matrix.stock_id }}
     needs: tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 165
     strategy:
       fail-fast: false
       max-parallel: 8
@@ -74,9 +74,9 @@ jobs:
         env:
           STOCK_ML_PROJECTS_JSON: ${{ secrets.STOCK_ML_PROJECTS_JSON }}
           STOCK_IDS: ${{ matrix.stock_id }}
-          LOOKBACK_DAYS: ${{ inputs.lookback_days || '30' }}
-          EVALUATION_DAYS: ${{ inputs.evaluation_days || '5' }}
-          MAX_FOLDS: ${{ inputs.max_folds || '2' }}
-          ALLOW_CALIBRATION_PROMOTION: "false"
+          LOOKBACK_DAYS: ${{ github.event.inputs.lookback_days || '180' }}
+          EVALUATION_DAYS: ${{ github.event.inputs.evaluation_days || '30' }}
+          MAX_FOLDS: ${{ github.event.inputs.max_folds || '120' }}
+          ALLOW_CALIBRATION_PROMOTION: "true"
           GITHUB_SHA: ${{ github.sha }}
         run: python python/stock_ml/backtest_runner.py
