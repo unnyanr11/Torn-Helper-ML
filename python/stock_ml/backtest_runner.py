@@ -2,8 +2,53 @@
 import json, os, sys, uuid
 from datetime import datetime, timezone, timedelta
 import psycopg
+import numpy as np
 from psycopg.types.json import Jsonb
 from backtesting import run_backtest, calibration_from_backtest
+
+
+def validate_and_promote(conn, stock, run_id, candidate):
+    # Never promote on backtest performance alone. Use later live forward outcomes.
+    if not candidate.get('active'):
+        return dict(promoted=False, reason=candidate.get('reason', 'backtest_candidate_rejected'))
+    rows = conn.execute("""
+        select raw_return,predicted_return,actual_return
+        from stock_engine.ml_v2_checks
+        where stock_id=%s and style='short' and analysis_minutes=10080
+          and horizon_minutes=1440 and checked_at is not null
+          and target_at<=now() and target_at>=now()-interval '90 days'
+        order by target_at desc limit 120
+    """, (stock,)).fetchall()
+    if len(rows) < 30:
+        return dict(promoted=False, reason='insufficient_live_forward_samples', samples=len(rows))
+    raw=np.asarray([float(r[0]) for r in rows])
+    current=np.asarray([float(r[1]) for r in rows])
+    actual=np.asarray([float(r[2]) for r in rows])
+    corrected=candidate['scale']*raw+candidate['bias']
+    baseline_mae=float(np.mean(np.abs(actual-current)))
+    candidate_mae=float(np.mean(np.abs(actual-corrected)))
+    if not candidate_mae < baseline_mae*0.98:
+        return dict(promoted=False, reason='live_forward_holdout_did_not_improve_by_2pct',
+                    samples=len(rows), baseline_mae=baseline_mae, candidate_mae=candidate_mae)
+    q90=float(np.quantile(np.abs(actual-corrected), .90))
+    payload=dict(scale=float(candidate['scale']), bias=float(candidate['bias']),
+        error_q90=q90, samples=len(rows), active=True,
+        source='walk_forward_backtest_plus_live_forward_validation',
+        source_backtest_run=str(run_id), live_forward_mae=candidate_mae,
+        previous_mae=baseline_mae)
+    conn.execute("""
+        insert into stock_engine.ml_v2_calibration
+        (stock_id,style,analysis_minutes,horizon_minutes,payload)
+        values(%s,'short',10080,1440,%s)
+        on conflict(stock_id,style,analysis_minutes,horizon_minutes)
+        do update set payload=excluded.payload,calibrated_at=now()
+    """, (stock, Jsonb(payload)))
+    conn.execute("""
+        update stock_engine.ml_backtest_calibration_candidates
+        set promoted=true,promotion_reason=%s where run_id=%s
+    """, (f'live_forward_validated: {baseline_mae:.8g} -> {candidate_mae:.8g}', run_id))
+    return dict(promoted=True, samples=len(rows), baseline_mae=baseline_mae,
+                candidate_mae=candidate_mae, error_q90=q90)
 
 def process(project,dsn,stock_ids,lookback_days,max_folds):
     with psycopg.connect(dsn,sslmode='require',connect_timeout=15,autocommit=True) as conn:
@@ -47,7 +92,8 @@ def process(project,dsn,stock_ids,lookback_days,max_folds):
                 candidate=calibration_from_backtest(result['predictions'])
                 conn.execute("""insert into stock_engine.ml_backtest_calibration_candidates(run_id,candidate)
                     values(%s,%s)""",(run_id,Jsonb(candidate)))
-            print(json.dumps(dict(stock_id=stock,run_id=str(run_id),status=result['status'],metrics=result['metrics'],calibration_candidate=candidate)))
+            promotion=validate_and_promote(conn,stock,run_id,candidate)
+            print(json.dumps(dict(stock_id=stock,run_id=str(run_id),status=result['status'],metrics=result['metrics'],calibration_candidate=candidate,calibration_promotion=promotion)))
 def main():
     raw=os.getenv('STOCK_ML_PROJECTS_JSON','{}')
     try: projects=json.loads(raw)
