@@ -1,4 +1,4 @@
--- Install in each stock shard. Additive only; does not modify existing RLS policies.
+-- Install in each stock shard. Additive only. Existing RLS policies are not modified.
 begin;
 create table if not exists stock_engine.ml_backtest_runs (
   run_id uuid primary key,
