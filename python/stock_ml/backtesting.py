@@ -29,7 +29,16 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
     candidates=candidates[candidates>=times[0]+window_minutes+horizon_minutes+min_train_rows*stride]
     if len(candidates)>max_folds:
         candidates=candidates[np.linspace(0,len(candidates)-1,max_folds).astype(int)]
-    folds=[]; predictions=[]; trades=[]; equity=float(initial_capital); peak=equity; max_dd=0.0
+    # Drop overlapping evaluation windows so capital is never simultaneously
+    # committed to multiple forecasts for the same stock.
+    non_overlapping=[]
+    last_exit=-1
+    for candidate in candidates:
+        if int(candidate)>=last_exit:
+            non_overlapping.append(int(candidate))
+            last_exit=int(candidate)+horizon_minutes
+    candidates=np.asarray(non_overlapping,dtype=np.int64)
+    predictions=[]; trades=[]; equity=float(initial_capital); peak=equity; max_dd=0.0
     cost=(fee_bps+slippage_bps)*2/10000.0
     for origin in candidates:
         # Strict prefix: future observations are not even passed into model fitting.
