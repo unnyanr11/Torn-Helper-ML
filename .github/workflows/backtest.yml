@@ -9,9 +9,9 @@ on:
         default: "180"
         type: string
       evaluation_days:
-        description: Out-of-sample evaluation period in days
+        description: Evaluation days; use 0 to evaluate all eligible history currently available
         required: true
-        default: "30"
+        default: "0"
         type: string
       max_folds:
         description: Maximum walk-forward folds per stock
@@ -75,7 +75,7 @@ jobs:
           STOCK_ML_PROJECTS_JSON: ${{ secrets.STOCK_ML_PROJECTS_JSON }}
           STOCK_IDS: ${{ matrix.stock_id }}
           LOOKBACK_DAYS: ${{ github.event.inputs.lookback_days || '180' }}
-          EVALUATION_DAYS: ${{ github.event.inputs.evaluation_days || '30' }}
+          EVALUATION_DAYS: ${{ github.event.inputs.evaluation_days || '0' }}
           MAX_FOLDS: ${{ github.event.inputs.max_folds || '120' }}
           ALLOW_CALIBRATION_PROMOTION: "true"
           GITHUB_SHA: ${{ github.sha }}
