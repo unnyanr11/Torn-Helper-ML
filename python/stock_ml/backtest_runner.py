@@ -74,7 +74,7 @@ def process(project,dsn,stock_ids,lookback_days,max_folds):
                         config=dict(style=style,window_minutes=window_minutes,horizon_minutes=horizon_minutes,
                             fee_bps=10,slippage_bps=5,initial_capital=10000,max_folds=max_folds,
                             lookback_days=lookback_days,execution='decision-close to exact-horizon close',
-                            combination_count=len(combinations),model_family=model_family,
+                            combination_count=len(combinations),model_family=model_family)
                         conn.execute("insert into stock_engine.ml_backtest_runs(run_id,stock_id,status,config,source_commit) values(%s,%s,'running',%s,%s)",
                             (run_id,stock,Jsonb(config),os.getenv('GITHUB_SHA')))
                         result=run_backtest(times,prices,window_minutes=window_minutes,
