@@ -3,7 +3,7 @@ import json, os, sys, uuid
 import psycopg
 import numpy as np
 from psycopg.types.json import Jsonb
-from backtesting import run_backtest, calibration_from_backtest
+from backtesting import run_backtest, calibration_from_backtest, MODEL_FAMILIES
 from realtime_model import COMBINATIONS
 
 
@@ -69,11 +69,12 @@ def process(project,dsn,stock_ids,lookback_days,max_folds):
             # The canonical model registry currently defines 104 combinations.
             combinations=COMBINATIONS
             for style,window_minutes,horizon_minutes in combinations:
+              for model_family in MODEL_FAMILIES:
                         run_id=uuid.uuid4()
                         config=dict(style=style,window_minutes=window_minutes,horizon_minutes=horizon_minutes,
                             fee_bps=10,slippage_bps=5,initial_capital=10000,max_folds=max_folds,
                             lookback_days=lookback_days,execution='decision-close to exact-horizon close',
-                            combination_count=len(combinations))
+                            combination_count=len(combinations),model_family=model_family,
                         conn.execute("insert into stock_engine.ml_backtest_runs(run_id,stock_id,status,config,source_commit) values(%s,%s,'running',%s,%s)",
                             (run_id,stock,Jsonb(config),os.getenv('GITHUB_SHA')))
                         result=run_backtest(times,prices,window_minutes=window_minutes,
@@ -98,7 +99,7 @@ def process(project,dsn,stock_ids,lookback_days,max_folds):
                                 values(%s,%s)""",(run_id,Jsonb(candidate)))
                         promotion=validate_and_promote(conn,stock,run_id,candidate,style=style,
                             window_minutes=window_minutes,horizon_minutes=horizon_minutes)
-                        print(json.dumps(dict(stock_id=stock,run_id=str(run_id),config=config,
+                        print(json.dumps(dict(stock_id=stock,run_id=str(run_id),model_family=model_family,config=config,
                             status=result['status'],metrics=result['metrics'],calibration_candidate=candidate,
                             calibration_promotion=promotion)))
 def main():
