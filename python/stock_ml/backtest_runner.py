@@ -103,8 +103,6 @@ def process(project,dsn,stock_ids,lookback_days,max_folds):
                         print(json.dumps(dict(stock_id=stock,run_id=str(run_id),config=config,
                             status=result['status'],metrics=result['metrics'],calibration_candidate=candidate,
                             calibration_promotion=promotion)))
-            promotion=validate_and_promote(conn,stock,run_id,candidate)
-            print(json.dumps(dict(stock_id=stock,run_id=str(run_id),status=result['status'],metrics=result['metrics'],calibration_candidate=candidate,calibration_promotion=promotion)))
 def main():
     raw=os.getenv('STOCK_ML_PROJECTS_JSON','{}')
     try: projects=json.loads(raw)
