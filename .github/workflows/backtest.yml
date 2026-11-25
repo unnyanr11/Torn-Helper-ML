@@ -12,10 +12,15 @@ on:
         required: true
         default: "180"
         type: string
+      evaluation_days:
+        description: Out-of-sample evaluation period in days
+        required: true
+        default: "15"
+        type: string
       max_folds:
         description: Maximum walk-forward folds per stock
         required: true
-        default: "2"
+        default: "60"
         type: string
   schedule:
     - cron: "23 */2 * * *"
@@ -46,6 +51,7 @@ jobs:
           STOCK_ML_PROJECTS_JSON: ${{ secrets.STOCK_ML_PROJECTS_JSON }}
           STOCK_IDS: ${{ inputs.stock_ids }}
           LOOKBACK_DAYS: ${{ inputs.lookback_days || '180' }}
-          MAX_FOLDS: ${{ inputs.max_folds || '2' }}
+          EVALUATION_DAYS: ${{ inputs.evaluation_days || '15' }}
+          MAX_FOLDS: ${{ inputs.max_folds || '60' }}
           GITHUB_SHA: ${{ github.sha }}
         run: python python/stock_ml/backtest_runner.py
