@@ -56,7 +56,9 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
         raise ValueError('Invalid cost or capital assumption')
     stride=15 if style=='short' else 60
     candidates=times[(times%stride)==0]
-    candidates=candidates[candidates>=times[0]+window_minutes+horizon_minutes+min_train_rows*stride]\n    if evaluation_start_minute is not None:\n        candidates=candidates[candidates>=int(evaluation_start_minute)]
+    candidates=candidates[candidates>=times[0]+window_minutes+horizon_minutes+min_train_rows*stride]
+    if evaluation_start_minute is not None:
+        candidates=candidates[candidates>=int(evaluation_start_minute)]
     if len(candidates)>max_folds:
         candidates=candidates[np.linspace(0,len(candidates)-1,max_folds).astype(int)]
     non_overlapping=[]; last_exit=-1
@@ -124,7 +126,8 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
     sharpe=float(np.mean(trade_returns)/np.std(trade_returns,ddof=1)) if len(trade_returns)>1 and np.std(trade_returns,ddof=1)>0 else None
     return dict(status='completed' if predictions else 'insufficient_history',
         config=dict(style=style,window_minutes=window_minutes,horizon_minutes=horizon_minutes,
-            model_family=model_family,evaluation_start_minute=(int(evaluation_start_minute) if evaluation_start_minute is not None else None),\n            fee_bps=fee_bps,slippage_bps=slippage_bps,
+            model_family=model_family,evaluation_start_minute=(int(evaluation_start_minute) if evaluation_start_minute is not None else None),
+            fee_bps=fee_bps,slippage_bps=slippage_bps,
             initial_capital=initial_capital,execution='decision-close to exact-horizon close',trade_on=trade_on),
         metrics=dict(folds=len(predictions),trades=len(trades),total_return=equity/initial_capital-1.0,
             final_capital=equity,win_rate=wins/len(trades) if trades else None,wins=wins,losses=losses,
