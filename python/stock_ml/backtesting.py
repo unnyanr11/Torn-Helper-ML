@@ -110,7 +110,7 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
         if not math.isfinite(future) or not math.isfinite(current): continue
         actual=future/current-1.0
         signal=signal_for_return(final_prediction,validation_uncertainty,approved,
-            fee_bps=fee_bps,slippage_bps=slippage_bps,minimum_net_return=minimum_net_return,minimum_net_return=minimum_net_return)
+            fee_bps=fee_bps,slippage_bps=slippage_bps,minimum_net_return=minimum_net_return)
         predictions.append(dict(origin_minute=origin,target_minute=origin+horizon_minutes,
             origin_price=current,actual_price=future,predicted_return=final_prediction,
             raw_return=final_prediction,actual_return=actual,
@@ -136,7 +136,7 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
     return dict(status='completed' if predictions else 'insufficient_history',
         config=dict(style=style,window_minutes=window_minutes,horizon_minutes=horizon_minutes,
             model_family=model_family,evaluation_start_minute=(int(evaluation_start_minute) if evaluation_start_minute is not None else None),
-            fee_bps=fee_bps,slippage_bps=slippage_bps,
+            fee_bps=fee_bps,slippage_bps=slippage_bps,minimum_net_return=minimum_net_return,
             initial_capital=initial_capital,execution='decision-close to exact-horizon close',trade_on=trade_on),
         metrics=dict(folds=len(predictions),trades=len(trades),total_return=equity/initial_capital-1.0,
             final_capital=equity,win_rate=wins/len(trades) if trades else None,wins=wins,losses=losses,
