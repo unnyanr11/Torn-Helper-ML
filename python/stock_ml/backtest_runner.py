@@ -50,7 +50,7 @@ def validate_and_promote(conn, stock, run_id, candidate, *, style, window_minute
     return dict(promoted=True, samples=len(rows), baseline_mae=baseline_mae,
                 candidate_mae=candidate_mae, error_q90=q90)
 
-def process(project,dsn,stock_ids,lookback_days,max_folds):
+def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds):
     with psycopg.connect(dsn,sslmode='require',connect_timeout=15,autocommit=True) as conn:
         settings=conn.execute("select project_number,enabled from stock_engine.settings where singleton").fetchone()
         if not settings or int(settings[0])!=project or not settings[1]:
@@ -64,7 +64,7 @@ def process(project,dsn,stock_ids,lookback_days,max_folds):
                 from stock_engine.prices where stock_id=%s and observed_at>=now()-(%s * interval '1 day')
                 group by 1 order by 1""",(stock,lookback_days)).fetchall()
             if len(rows)<1000: print(f"stock {stock}: insufficient raw observations"); continue
-            times=[int(r[0]) for r in rows]; prices=[float(r[1]) for r in rows]
+            times=[int(r[0]) for r in rows]; prices=[float(r[1]) for r in rows]\n            # Reserve the most recent evaluation_days for out-of-sample forecasts.\n            # Each fold trains only on observations strictly before its own origin.\n            evaluation_start=int(times[-1]-evaluation_days*1440)
             # Backtest every configured live-model window/horizon/style combination.
             # The canonical model registry currently defines 104 combinations.
             combinations=COMBINATIONS
@@ -73,14 +73,14 @@ def process(project,dsn,stock_ids,lookback_days,max_folds):
                         run_id=uuid.uuid4()
                         config=dict(style=style,window_minutes=window_minutes,horizon_minutes=horizon_minutes,
                             fee_bps=10,slippage_bps=5,initial_capital=10000,max_folds=max_folds,
-                            lookback_days=lookback_days,execution='decision-close to exact-horizon close',
+                            lookback_days=lookback_days,evaluation_days=evaluation_days,\n                            evaluation_start_minute=evaluation_start,\n                            execution='decision-close to exact-horizon close',
                             combination_count=len(combinations),model_family=model_family)
                         conn.execute("insert into stock_engine.ml_backtest_runs(run_id,stock_id,status,config,source_commit) values(%s,%s,'running',%s,%s)",
                             (run_id,stock,Jsonb(config),os.getenv('GITHUB_SHA')))
                         result=run_backtest(times,prices,window_minutes=window_minutes,
                             horizon_minutes=horizon_minutes,style=style,fee_bps=config['fee_bps'],
                             slippage_bps=config['slippage_bps'],initial_capital=config['initial_capital'],
-                            max_folds=max_folds,model_family=model_family)
+                            max_folds=max_folds,model_family=model_family,\n                            evaluation_start_minute=evaluation_start)
                         with conn.transaction():
                             conn.execute("update stock_engine.ml_backtest_runs set status=%s,metrics=%s where run_id=%s",
                                 (result['status'],Jsonb(result['metrics']),run_id))
@@ -115,7 +115,7 @@ def main():
     failed=False
     for n,dsn in projects.items():
         project=int(n)
-        try: process(project,dsn,requested,days,folds)
+        try: process(project,dsn,requested,days,evaluation_days,folds)
         except Exception as exc:
             failed=True; print(f"shard {project} failed: {type(exc).__name__}",file=sys.stderr)
     return int(failed)
