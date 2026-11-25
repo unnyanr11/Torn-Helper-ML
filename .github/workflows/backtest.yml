@@ -113,6 +113,8 @@ jobs:
       - name: Run stock-specific walk-forward backtest
         env:
           STOCK_ML_PROJECTS_JSON: ${{ secrets.STOCK_ML_PROJECTS_JSON }}
+          SHORT_MIN_EXPECTED_NET_RETURN: ${{ vars.SHORT_MIN_EXPECTED_NET_RETURN || '0.001' }}
+          SHORT_ESTIMATED_TRADING_COST: ${{ vars.SHORT_ESTIMATED_TRADING_COST || '0.001' }}
           STOCK_IDS: ${{ matrix.stock_id }}
           LOOKBACK_DAYS: ${{ github.event.inputs.lookback_days || '180' }}
           EVALUATION_DAYS: ${{ github.event.inputs.evaluation_days || '0' }}
