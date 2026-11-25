@@ -103,8 +103,7 @@ windows x 6 short horizons, plus 8 long windows x 4 long horizons) across all
 six supported backtest model families. The scheduled defaults use 180 days of
 history, all eligible out-of-sample history currently available in each shard
 (up to the 180-day retention limit), and up to 30 walk-forward folds per
-configuration. Long horizons may still be skipped by the evaluator when the
-available history cannot support a valid matured sample.
+configuration. Forecast configurations are limited to the short-term registry; long-term forecasting is maintained in the dedicated repository.
 
 Backtest predictions, trades, metrics and calibration candidates are stored
 in the separate `stock_engine.ml_backtest_*` tables. Ridge-compatible
