@@ -50,11 +50,11 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
                  fee_bps=10.0,slippage_bps=5.0,initial_capital=10000.0,
                  max_folds=120,min_train_rows=200,trade_on='signal',model_family='ridge',evaluation_start_minute=None):
     times,prices=validate_series(times,prices)
-    if style not in ('short','long') or window_minutes<15 or horizon_minutes<15 or model_family not in MODEL_FAMILIES:
+    if style != 'short' or window_minutes<15 or horizon_minutes<15 or model_family not in MODEL_FAMILIES:
         raise ValueError('Invalid model style, window, horizon or model family')
     if not 0<=fee_bps<=500 or not 0<=slippage_bps<=500 or initial_capital<=0:
         raise ValueError('Invalid cost or capital assumption')
-    stride=15 if style=='short' else 60
+    stride=15
     candidates=times[(times%stride)==0]
     candidates=candidates[candidates>=times[0]+window_minutes+horizon_minutes+min_train_rows*stride]
     if evaluation_start_minute is not None:
