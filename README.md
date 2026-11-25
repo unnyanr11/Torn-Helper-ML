@@ -82,7 +82,7 @@ The prediction worker is not a guarantee of profitability. Forecasts are
 estimates, not financial advice, and actual execution prices, spreads and
 liquidity may differ from stored closes.
 
-## Backtesting (automatic every three hours)
+## Backtesting (automatic every four hours)
 
 `.github/workflows/backtest.yml` runs the complete backtest matrix every
 three hours (UTC), and can also be started manually. A unit-test job runs once
@@ -113,6 +113,25 @@ at once.
 Before running backtests, install `python/stock_ml/backtest_setup.sql` in each
 shard after the live prediction schema is present. This creates isolated
 backtest tables and does not alter RLS policies.
+
+## Backtest performance reporting
+
+After the stock matrix finishes, the workflow runs
+`python/stock_ml/backtest_reporting.py` against each configured shard. It
+evaluates completed runs from the preceding eight hours and stores a compact
+JSON report in `stock_engine.ml_backtest_reports`. Reports include each
+configuration's sample count, MAE, RMSE, zero-return baseline MAE, directional
+accuracy, mean error and available trade results.
+
+A configuration is eligible for ranking only when it has at least 30
+out-of-sample predictions and its MAE improves on the zero-return baseline by
+at least 2%. The report records the strongest eligible model per stock and
+per stock/window/horizon configuration, as well as all evaluated rankings.
+Insufficient samples and baseline underperformance are not presented as
+successful models. These rankings are research outputs only: they do not
+change the live predictor or automatically promote non-Ridge model families.
+The report table is private and additive; installing the updated
+`backtest_setup.sql` creates it without changing existing RLS policies.
 
 ## Tests
 
