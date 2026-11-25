@@ -76,7 +76,9 @@ def save_results(conn, mapping):
                 where stock_engine.ml_v2_latest.origin_at<=excluded.origin_at''',
                 [(*key, datetime.fromtimestamp(value['origin_minute'] * 60, timezone.utc), Jsonb(value))
                  for key, value in mapping.items()])
-            ready = [(key, value) for key, value in mapping.items() if value['status'] == 'ready']
+            ready = [(key, value) for key, value in mapping.items()
+                     if value['status'] == 'ready' and value.get('model_id')
+                     and not value.get('forecast_method')]
             # One nonoverlapping issued forecast per key/horizon, not every minute.
             cur.executemany(f'''insert into stock_engine.ml_v2_checks
                 ({KEYS},origin_at,target_at,origin_price,raw_return,predicted_return,model_id)
