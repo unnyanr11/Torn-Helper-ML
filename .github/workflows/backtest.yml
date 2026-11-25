@@ -18,7 +18,9 @@ on:
         required: true
         default: "2"
         type: string
-  # Backtests are manual-only until the prediction pipeline is stable.
+  schedule:
+    # Run the complete 35-stock matrix every 12 hours (UTC).
+    - cron: "0 */12 * * *"
 
 permissions:
   contents: read
