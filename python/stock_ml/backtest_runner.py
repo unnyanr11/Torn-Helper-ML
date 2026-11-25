@@ -80,7 +80,7 @@ def process(project,dsn,stock_ids,lookback_days,max_folds):
                         result=run_backtest(times,prices,window_minutes=window_minutes,
                             horizon_minutes=horizon_minutes,style=style,fee_bps=config['fee_bps'],
                             slippage_bps=config['slippage_bps'],initial_capital=config['initial_capital'],
-                            max_folds=max_folds)
+                            max_folds=max_folds,model_family=model_family)
                         with conn.transaction():
                             conn.execute("update stock_engine.ml_backtest_runs set status=%s,metrics=%s where run_id=%s",
                                 (result['status'],Jsonb(result['metrics']),run_id))
@@ -97,8 +97,9 @@ def process(project,dsn,stock_ids,lookback_days,max_folds):
                             candidate=calibration_from_backtest(result['predictions'])
                             conn.execute("""insert into stock_engine.ml_backtest_calibration_candidates(run_id,candidate)
                                 values(%s,%s)""",(run_id,Jsonb(candidate)))
-                        promotion=validate_and_promote(conn,stock,run_id,candidate,style=style,
+                        promotion=(validate_and_promote(conn,stock,run_id,candidate,style=style,
                             window_minutes=window_minutes,horizon_minutes=horizon_minutes)
+                            if model_family=='ridge' else dict(promoted=False,reason='alternative_family_not_wired_to_live_predictor'))
                         print(json.dumps(dict(stock_id=stock,run_id=str(run_id),model_family=model_family,config=config,
                             status=result['status'],metrics=result['metrics'],calibration_candidate=candidate,
                             calibration_promotion=promotion)))
