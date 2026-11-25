@@ -111,7 +111,7 @@ def main():
     requested={int(x) for x in os.getenv('STOCK_IDS','').split(',') if x.strip()}
     if requested and (min(requested)<1 or max(requested)>35): raise SystemExit('STOCK_IDS must be between 1 and 35')
     days=int(os.getenv('LOOKBACK_DAYS','180')); folds=int(os.getenv('MAX_FOLDS','60'))
-    if not 30<=days<=180 or not 10<=folds<=500: raise SystemExit('lookback_days must be 30-180 and max_folds 10-500')
+    if not 30<=days<=180 or not 1<=folds<=500: raise SystemExit('lookback_days must be 30-180 and max_folds 10-500')
     failed=False
     for n,dsn in projects.items():
         project=int(n)
