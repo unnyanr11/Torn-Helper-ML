@@ -4,7 +4,6 @@ import psycopg
 import numpy as np
 from psycopg.types.json import Jsonb
 from backtesting import run_backtest, calibration_from_backtest
-from realtime_model import COMBINATIONS
 
 # Compact screening set for the 15-day evaluation: representative short windows
 # and horizons, plus three complementary model families. Ridge remains the only
