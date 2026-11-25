@@ -8,6 +8,9 @@ from psycopg.types.json import Jsonb
 LOOKBACK_HOURS = 8
 MIN_SAMPLES = 30
 MIN_IMPROVEMENT = 0.02
+MIN_TRADES = 5
+MAX_DRAWDOWN = 0.15
+MIN_PROFIT_FACTOR = 1.0
 
 
 def rank_rows(rows):
@@ -16,14 +19,25 @@ def rank_rows(rows):
     for row in rows:
         (stock_id, style, window_minutes, horizon_minutes, model_family,
          run_id, created_at, samples, mae, rmse, baseline_mae,
-         directional_accuracy, mean_error, total_return, trades, win_rate) = row
+         directional_accuracy, mean_error, total_return, trades, win_rate,
+         max_drawdown, profit_factor) = row
         samples=int(samples or 0)
         if not samples or mae is None or baseline_mae is None:
             continue
         mae=float(mae); baseline=float(baseline_mae)
         improvement=(baseline-mae)/baseline if baseline>0 else None
+        total_return=float(total_return) if total_return is not None else None
+        trades=int(trades or 0)
+        max_drawdown=float(max_drawdown) if max_drawdown is not None else None
+        profit_factor=float(profit_factor) if profit_factor is not None else None
+        drawdown_abs=abs(max_drawdown) if max_drawdown is not None else None
+        risk_adjusted_score=(total_return/max(drawdown_abs,0.01)
+                             if total_return is not None and drawdown_abs is not None else None)
         eligible=(samples>=MIN_SAMPLES and improvement is not None
-                  and improvement>=MIN_IMPROVEMENT)
+                  and improvement>=MIN_IMPROVEMENT and trades>=MIN_TRADES
+                  and total_return is not None and total_return>0
+                  and drawdown_abs is not None and drawdown_abs<=MAX_DRAWDOWN
+                  and profit_factor is not None and profit_factor>MIN_PROFIT_FACTOR)
         evaluated.append(dict(
             stock_id=int(stock_id),style=style,window_minutes=int(window_minutes),
             horizon_minutes=int(horizon_minutes),model_family=model_family,
@@ -32,13 +46,15 @@ def rank_rows(rows):
             mae_improvement_pct=(improvement*100 if improvement is not None else None),
             directional_accuracy=(float(directional_accuracy) if directional_accuracy is not None else None),
             mean_error=(float(mean_error) if mean_error is not None else None),
-            total_return=(float(total_return) if total_return is not None else None),
-            trades=int(trades or 0),win_rate=(float(win_rate) if win_rate is not None else None),
-            eligible=eligible))
+            total_return=total_return,
+            trades=trades,win_rate=(float(win_rate) if win_rate is not None else None),
+            max_drawdown=max_drawdown,profit_factor=profit_factor,
+            risk_adjusted_score=risk_adjusted_score,eligible=eligible))
     evaluated.sort(key=lambda x: (
         x['stock_id'], x['style'], x['window_minutes'], x['horizon_minutes'],
-        not x['eligible'], -(x['mae_improvement_pct'] or -1e9),
-        -(x['directional_accuracy'] or 0), x['rmse']))
+        not x['eligible'], -(x['risk_adjusted_score'] if x['risk_adjusted_score'] is not None else -1e9),
+        -(x['profit_factor'] if x['profit_factor'] is not None else -1e9),
+        -(x['mae_improvement_pct'] or -1e9), -(x['directional_accuracy'] or 0), x['rmse']))
     eligible=[x for x in evaluated if x['eligible']]
     best_by_stock={}
     best_by_configuration={}
@@ -52,6 +68,9 @@ def rank_rows(rows):
     return dict(
         lookback_hours=LOOKBACK_HOURS, minimum_samples=MIN_SAMPLES,
         minimum_mae_improvement_pct=MIN_IMPROVEMENT*100,
+        minimum_trades=MIN_TRADES,maximum_drawdown_pct=MAX_DRAWDOWN*100,
+        minimum_profit_factor=MIN_PROFIT_FACTOR,
+        ranking_method='net_return_divided_by_max(absolute_drawdown, 1%) after eligibility filters',
         evaluated_runs=len(evaluated), eligible_runs=len(eligible),
         rejected_runs=len(evaluated)-len(eligible),
         best_model_by_stock=list(best_by_stock.values()),
@@ -85,7 +104,9 @@ def main():
                            avg(p.predicted_return-p.actual_return),
                            (r.metrics->>'total_return')::double precision,
                            (r.metrics->>'trades')::integer,
-                           (r.metrics->>'win_rate')::double precision
+                           (r.metrics->>'win_rate')::double precision,
+                           (r.metrics->>'max_drawdown')::double precision,
+                           (r.metrics->>'profit_factor')::double precision
                     from stock_engine.ml_backtest_runs r
                     join stock_engine.ml_backtest_predictions p on p.run_id=r.run_id
                     where r.status='completed'
