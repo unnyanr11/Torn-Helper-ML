@@ -65,6 +65,11 @@ def train_range(times, prices, style, window, horizons, prepared=None, observed_
         raise ValueError('Only short-term analysis is supported in this repository')
     stride = 15
     origins = times[times % stride == 0]
+    if observed_mask is not None:
+        observed_mask = np.asarray(observed_mask, dtype=bool)
+        if len(observed_mask) != len(times):
+            raise ValueError('Observed-price mask must match the minute series')
+        origins = origins[observed_mask[np.searchsorted(times, origins)]]
     if len(origins) > 3000:
         origins = origins[np.linspace(0, len(origins) - 1, 3000).astype(int)]
     x, complete = feature_matrix(times, prices, origins, window, prepared)
@@ -83,6 +88,12 @@ def train_range(times, prices, style, window, horizons, prepared=None, observed_
     for horizon in horizons:
         future = exact(times, prices, origins + horizon)
         matured = np.isfinite(future)
+        if observed_mask is not None:
+            target_idx = np.searchsorted(times, origins + horizon)
+            target_exists = target_idx < len(times)
+            target_real = np.zeros(len(target_idx), dtype=bool)
+            target_real[target_exists] = observed_mask[target_idx[target_exists]]
+            matured &= target_real
         t, design = origins[matured], x[matured]
         y = future[matured] / exact(times, prices, t) - 1
         if len(t) < 240:
