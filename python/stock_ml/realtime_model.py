@@ -52,7 +52,7 @@ def feature_matrix(times,prices,origins,window,prepared=None):
 def infer(parameters,x):
     return ((np.asarray(x)-np.asarray(parameters['mean']))/np.asarray(parameters['scale']))@np.asarray(parameters['coef'])+parameters['intercept']
 
-def train_range(times, prices, style, window, horizons, prepared=None):
+def train_range(times, prices, style, window, horizons, prepared=None, observed_mask=None):
     """Select Ridge, ElasticNet or their linear blend on chronological validation.
 
     Export remains one standardized linear model, preserving the browser/Python
