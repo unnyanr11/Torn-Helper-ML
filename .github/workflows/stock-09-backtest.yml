@@ -1,0 +1,39 @@
+name: Stock 09 independent backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      lookback_days:
+        description: Historical lookback days (30-180)
+        required: true
+        default: "180"
+        type: string
+      evaluation_days:
+        description: Evaluation days (0 = all eligible history)
+        required: true
+        default: "0"
+        type: string
+      max_folds:
+        description: Maximum walk-forward folds
+        required: true
+        default: "30"
+        type: string
+      backtest_workers:
+        description: Python worker processes (1-4 recommended)
+        required: true
+        default: "2"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  run-stock-9:
+    uses: ./.github/workflows/backtest-stock-reusable.yml
+    with:
+      stock_id: 9
+      lookback_days: ${{ fromJSON(inputs.lookback_days) }}
+      evaluation_days: ${{ fromJSON(inputs.evaluation_days) }}
+      max_folds: ${{ fromJSON(inputs.max_folds) }}
+      backtest_workers: ${{ fromJSON(inputs.backtest_workers) }}
+    secrets: inherit
