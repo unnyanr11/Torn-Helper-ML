@@ -146,12 +146,20 @@ def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds):
                     if strategy_name.startswith('baseline_'):
                         continue
                     run_id = uuid.uuid4()
+                    opportunity = next((row for row in competition.get('opportunity_ranking', [])
+                        if row.get('strategy') == strategy_name), None)
                     config = dict(style='short', window_minutes=lookback_days * 1440,
                         horizon_minutes=horizon_minutes, strategy_family=strategy_name,
                         model_family='technical_strategy', fee_bps=10,
                         slippage_bps=5, minimum_net_return=0.002,
                         execution=competition['config']['execution'],
-                        risk_controls='0.5% equity risk budget; 15% position cap; 1.5x volatility stop; 2R target')
+                        current_market_regime=competition.get('config', {}).get('current_market_regime'),
+                        best_strategy_for_current_regime=competition.get('best_strategy_for_current_regime'),
+                        multi_timeframe_confirmation=competition.get('multi_timeframe_confirmation'),
+                        opportunity_score=(opportunity or {}).get('score'),
+                        opportunity_status=(opportunity or {}).get('status'),
+                        opportunity_probability_basis=competition.get('opportunity_probability_basis'),
+                        risk_controls='0.5% equity risk budget; 15% position cap; regime-scaled volatility stop; close-only trailing stop; 2R minimum target')
                     conn.execute(
                         "insert into stock_engine.ml_backtest_runs(run_id,stock_id,status,config,source_commit) values(%s,%s,'running',%s,%s)",
                         (run_id, stock, Jsonb(config), os.getenv('GITHUB_SHA')))
