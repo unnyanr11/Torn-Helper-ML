@@ -130,7 +130,7 @@ def process(project,dsn,force_train=False,force_calibrate=False):
                 x,valid=features[window]
                 key=(stock,style,window,horizon)
                 model=models.get(key)
-                if model and model.get('status')=='ready' and origin-model.get('trained_through',0)>(180 if model.get('source')=='walk_forward_backtest_winner' else 60):
+                if model and model.get('status')=='ready' and origin-model.get('trained_through',0)>(1440 if model.get('source')=='walk_forward_backtest_winner' else 60):
                     model=dict(status='training',reason='Waiting for a recently trained Python model')
                 result=make_result(model,corrections.get(key),x,valid)
                 if result['status'] != 'ready':
