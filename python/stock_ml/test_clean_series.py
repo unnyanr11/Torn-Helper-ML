@@ -1,7 +1,7 @@
 import unittest
 import numpy as np
 
-from python.stock_ml.clean_series import reconstruct_short_gaps, contiguous_segments
+from clean_series import reconstruct_short_gaps, contiguous_segments
 
 
 class CleanSeriesTests(unittest.TestCase):
