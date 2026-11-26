@@ -125,67 +125,95 @@ def _prepare_backtest_folds(times, prices, *, window_minutes, horizon_minutes,
     return folds
 
 
-def _result_from_folds(folds, *, family, window_minutes, horizon_minutes,
-                       evaluation_start_minute):
-    predictions = []
-    for fold in folds:
-        val_pred = _family_predict(
-            family, fold['x_fit'], fold['y_fit'], fold['x_validation']
-        )
-        validation_mae = float(np.mean(np.abs(fold['y_validation'] - val_pred)))
-        baseline = float(np.mean(np.abs(fold['y_validation'])))
-        approved = bool(baseline > 0 and validation_mae < baseline * .98)
-        final_prediction = float(_family_predict(
-            family, fold['x_full'], fold['y_full'], fold['x_eval']
-        )[0])
-        signal = ('Buy' if approved and final_prediction > 0 else
-                  'Sell' if approved and final_prediction < 0 else 'Wait')
-        predictions.append(dict(
-            origin_minute=fold['origin'],
-            target_minute=fold['origin'] + horizon_minutes,
-            origin_price=fold['current'],
-            actual_price=fold['future'],
-            predicted_return=final_prediction,
-            raw_return=final_prediction,
-            actual_return=fold['actual'],
-            predicted_price=fold['current'] * (1.0 + final_prediction),
-            signal=signal,
-            model_id=family,
-            model_family=family,
-            validation_mae=validation_mae,
-            validation_baseline_mae=baseline,
-            approved=approved,
-        ))
+def _results_from_folds(folds, *, families, window_minutes, horizon_minutes,
+                         evaluation_start_minute):
+    """Fit each base estimator once per fold and reuse its predictions for the ensemble."""
+    families = tuple(families)
+    fit_families = BASE_FAMILIES if 'ensemble' in families else families
+    predictions_by_family = {family: [] for family in families}
 
-    actuals = [p['actual_return'] for p in predictions]
-    errors = [p['actual_return'] - p['predicted_return'] for p in predictions]
-    directional = [
-        (p['predicted_return'] >= 0) == (p['actual_return'] >= 0)
-        for p in predictions
-    ]
-    return dict(
-        status='completed' if predictions else 'insufficient_history',
-        config=dict(
-            style='short',
-            window_minutes=window_minutes,
-            horizon_minutes=horizon_minutes,
-            model_family=family,
-            evaluation_start_minute=(
-                int(evaluation_start_minute) if evaluation_start_minute is not None else None
+    for fold in folds:
+        validation_predictions = {
+            family: _fit_predict(
+                family, fold['x_fit'], fold['y_fit'], fold['x_validation']
+            )
+            for family in fit_families
+        }
+        final_predictions = {
+            family: _fit_predict(
+                family, fold['x_full'], fold['y_full'], fold['x_eval']
+            )
+            for family in fit_families
+        }
+
+        if 'ensemble' in families:
+            validation_predictions['ensemble'] = np.median(
+                np.vstack([validation_predictions[name] for name in BASE_FAMILIES]), axis=0
+            )
+            final_predictions['ensemble'] = np.median(
+                np.vstack([final_predictions[name] for name in BASE_FAMILIES]), axis=0
+            )
+
+        baseline = float(np.mean(np.abs(fold['y_validation'])))
+        for family in families:
+            val_pred = validation_predictions[family]
+            validation_mae = float(np.mean(np.abs(fold['y_validation'] - val_pred)))
+            approved = bool(baseline > 0 and validation_mae < baseline * .98)
+            final_prediction = float(final_predictions[family][0])
+            signal = ('Buy' if approved and final_prediction > 0 else
+                      'Sell' if approved and final_prediction < 0 else 'Wait')
+            predictions_by_family[family].append(dict(
+                origin_minute=fold['origin'],
+                target_minute=fold['origin'] + horizon_minutes,
+                origin_price=fold['current'],
+                actual_price=fold['future'],
+                predicted_return=final_prediction,
+                raw_return=final_prediction,
+                actual_return=fold['actual'],
+                predicted_price=fold['current'] * (1.0 + final_prediction),
+                signal=signal,
+                model_id=family,
+                model_family=family,
+                validation_mae=validation_mae,
+                validation_baseline_mae=baseline,
+                approved=approved,
+            ))
+
+    results = {}
+    for family, predictions in predictions_by_family.items():
+        actuals = [p['actual_return'] for p in predictions]
+        errors = [p['actual_return'] - p['predicted_return'] for p in predictions]
+        directional = [
+            (p['predicted_return'] >= 0) == (p['actual_return'] >= 0)
+            for p in predictions
+        ]
+        results[family] = dict(
+            status='completed' if predictions else 'insufficient_history',
+            config=dict(
+                style='short',
+                window_minutes=window_minutes,
+                horizon_minutes=horizon_minutes,
+                model_family=family,
+                evaluation_start_minute=(
+                    int(evaluation_start_minute)
+                    if evaluation_start_minute is not None else None
+                ),
+                evaluation_method='walk_forward_prediction_vs_actual_price',
+                signal_rule='forecast_direction_only; no trading-cost threshold',
             ),
-            evaluation_method='walk_forward_prediction_vs_actual_price',
-            signal_rule='forecast_direction_only; no trading-cost threshold',
-        ),
-        metrics=dict(
-            folds=len(predictions),
-            prediction_error=_metrics(errors),
-            actual_return=_metrics(actuals),
-            directional_accuracy=(float(np.mean(directional)) if directional else None),
-            directionally_correct=int(sum(directional)),
-            directionally_incorrect=int(len(directional) - sum(directional)),
-        ),
-        predictions=predictions,
-    )
+            metrics=dict(
+                folds=len(predictions),
+                prediction_error=_metrics(errors),
+                actual_return=_metrics(actuals),
+                directional_accuracy=(
+                    float(np.mean(directional)) if directional else None
+                ),
+                directionally_correct=int(sum(directional)),
+                directionally_incorrect=int(len(directional) - sum(directional)),
+            ),
+            predictions=predictions,
+        )
+    return results
 
 
 def run_backtest_competition(times, prices, *, window_minutes: int, horizon_minutes: int,
@@ -208,16 +236,13 @@ def run_backtest_competition(times, prices, *, window_minutes: int, horizon_minu
         max_folds=max_folds,
         min_train_rows=min_train_rows,
     )
-    return {
-        family: _result_from_folds(
-            folds,
-            family=family,
-            window_minutes=window_minutes,
-            horizon_minutes=horizon_minutes,
-            evaluation_start_minute=evaluation_start_minute,
-        )
-        for family in families
-    }
+    return _results_from_folds(
+        folds,
+        families=families,
+        window_minutes=window_minutes,
+        horizon_minutes=horizon_minutes,
+        evaluation_start_minute=evaluation_start_minute,
+    )
 
 
 def run_backtest(times, prices, *, window_minutes: int, horizon_minutes: int, style='short',

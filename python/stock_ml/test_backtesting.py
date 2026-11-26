@@ -27,19 +27,19 @@ class BacktestTests(unittest.TestCase):
         import backtesting
 
         rng=np.random.default_rng(231)
-        times=np.arange(0,12000,dtype=np.int64)
+        times=np.arange(0,20000,dtype=np.int64)
         prices=100*np.exp(np.cumsum(rng.normal(0.00001,0.0002,len(times))))
         with patch('backtesting.prepare_series', wraps=backtesting.prepare_series) as prepare:
             grouped=run_backtest_competition(
-                times,prices,window_minutes=60,horizon_minutes=15,max_folds=2,
+                times,prices,window_minutes=60,horizon_minutes=15,max_folds=3,
                 min_train_rows=200,model_families=('ridge','elastic_net'),
             )
             # Feature preparation occurs once per eligible fold, not once per family.
-            self.assertEqual(prepare.call_count,2)
+            self.assertEqual(prepare.call_count,3)
 
         for family in ('ridge','elastic_net'):
             individual=run_backtest(
-                times,prices,window_minutes=60,horizon_minutes=15,max_folds=2,
+                times,prices,window_minutes=60,horizon_minutes=15,max_folds=3,
                 min_train_rows=200,model_family=family,
             )
             self.assertEqual(
@@ -56,6 +56,30 @@ class BacktestTests(unittest.TestCase):
                 [p['actual_return'] for p in individual['predictions']],
                 rtol=0,atol=1e-12,
             )
+
+    def test_ensemble_reuses_base_model_fits(self):
+        from unittest.mock import patch
+        import backtesting
+
+        rng=np.random.default_rng(232)
+        times=np.arange(0,20000,dtype=np.int64)
+        prices=100*np.exp(np.cumsum(rng.normal(0.00001,0.0002,len(times))))
+        original_fit=backtesting._fit_predict
+        with patch('backtesting._fit_predict', wraps=original_fit) as fit:
+            results=run_backtest_competition(
+                times,prices,window_minutes=60,horizon_minutes=15,max_folds=3,
+                min_train_rows=200,model_families=MODEL_FAMILIES,
+            )
+        # Five base families × validation/final fit per eligible fold. The ensemble
+        # must reuse those predictions rather than fitting the five models again.
+        fold_count=len(results['ridge']['predictions'])
+        self.assertGreaterEqual(fold_count,1)
+        self.assertEqual(fit.call_count,5*2*fold_count)
+        self.assertEqual(set(results),set(MODEL_FAMILIES))
+        self.assertEqual(
+            [p['origin_minute'] for p in results['ensemble']['predictions']],
+            [p['origin_minute'] for p in results['ridge']['predictions']],
+        )
 
     def test_backtest_rejects_long_term_style(self):
         with self.assertRaisesRegex(ValueError, 'Invalid model style'):
