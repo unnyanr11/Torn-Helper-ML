@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 import numpy as np
-from market_intelligence import (classify_market_regime, adaptive_exit_plan, select_strategy_for_regime)
+from market_intelligence import (classify_market_regime, adaptive_exit_plan, select_strategy_for_regime, multi_timeframe_confirmation, score_opportunity)
 
 STRATEGY_FAMILIES = (
     "trend_ema", "trend_macd", "momentum_roc", "momentum_dual",
@@ -266,6 +266,26 @@ def run_strategy_competition(times, prices, *, horizon_steps, bar_seconds,
         if item["metrics"].get("eligible")), None)
     regime = current_regime.get("regime", "unknown")
     regime_strategy = select_strategy_for_regime(results, regime)
+    timeframe = multi_timeframe_confirmation(p[-20:], p[::5][-60:], p[::15][-60:])
+    opportunity_scores = []
+    for strategy_name, item in results.items():
+        if strategy_name.startswith("baseline_"):
+            continue
+        metrics = item["metrics"]
+        if metrics.get("mean_net_return") is None:
+            continue
+        trade_returns = np.asarray([trade["net_return"] for trade in item.get("trades", [])], dtype=float)
+        uncertainty = float(np.std(trade_returns, ddof=1)) if len(trade_returns) > 1 else 0.02
+        scored = score_opportunity(
+            expected_gross_return=float(metrics["mean_net_return"]) + cost,
+            probability_up=float(metrics.get("win_rate") or 0.0),
+            uncertainty=uncertainty, round_trip_cost=cost,
+            minimum_net_return=minimum_net_return,
+            regime_confidence=float(current_regime.get("confidence", 0.0)),
+            timeframe_agreement=float(timeframe.get("agreement", 0.0)),
+            strategy_eligible=bool(metrics.get("eligible")))
+        opportunity_scores.append({"strategy": strategy_name, **scored})
+    opportunity_scores.sort(key=lambda row: (row["eligible"], row["score"]), reverse=True)
     return dict(status="completed", config=dict(horizon_steps=horizon_steps,
         bar_seconds=bar_seconds, fee_bps=fee_bps, slippage_bps=slippage_bps,
         round_trip_cost=cost, minimum_net_return=minimum_net_return,
@@ -274,4 +294,7 @@ def run_strategy_competition(times, prices, *, horizon_steps, bar_seconds,
         stops="causal_volatility_stop_plus_close_trailing_stop", long_only=True,
         current_market_regime=current_regime),
         strategies=results, best_strategy=best_strategy,
-        best_strategy_for_current_regime=regime_strategy)
+        best_strategy_for_current_regime=regime_strategy,
+        multi_timeframe_confirmation=timeframe,
+        opportunity_ranking=opportunity_scores,
+        opportunity_probability_basis="historical out-of-sample strategy win frequency; not a calibrated forward probability")
