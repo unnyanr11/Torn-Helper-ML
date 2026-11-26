@@ -7,7 +7,7 @@ import numpy as np
 from algorithm_registry import FAMILY_TO_ALGORITHM_ID
 
 VERSION = 'minute-adaptive-linear-v1'
-SHORT_RANGES = (15, 30, 60, 120, 180, 360, 720, 1080, 1440, 4320, 10080, 43200)
+SHORT_RANGES = (720, 1080, 1440, 4320, 10080, 43200)  # Minimum short-term analysis window: 12 hours
 SHORT_HORIZONS = tuple(h * 60 for h in (1, 3, 6, 12, 18, 24))
 # This repository owns short-term analysis only. Long-term analysis lives in
 # the dedicated LongTerm-Torn-Helper-ML repository.
