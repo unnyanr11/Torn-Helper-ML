@@ -154,6 +154,8 @@ class BacktestTests(unittest.TestCase):
                                  model_family=family)
             self.assertEqual(model['status'],'ready')
             self.assertEqual(model['model_family'],family)
+            from algorithm_registry import algorithm_id_for_family
+            self.assertEqual(model['algorithm_id'],algorithm_id_for_family(family))
             prediction=infer_exported(model['parameters'],x[0])
             self.assertTrue(np.isfinite(prediction),family)
 
