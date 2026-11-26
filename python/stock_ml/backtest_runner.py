@@ -84,7 +84,7 @@ def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds):
               for model_family in BACKTEST_MODEL_FAMILIES:
                         run_id=uuid.uuid4()
                         config=dict(style=style,window_minutes=window_minutes,horizon_minutes=horizon_minutes,
-                            fee_bps=10,slippage_bps=5,initial_capital=10000,max_folds=max_folds,
+                            max_folds=max_folds,
                             lookback_days=lookback_days,evaluation_days=(evaluation_days or None),
                             evaluation_mode=('all_available_after_minimum_training' if evaluation_days==0 else 'fixed_recent_window'),
                             available_history_days=round(available_days,2),
@@ -94,8 +94,7 @@ def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds):
                         conn.execute("insert into stock_engine.ml_backtest_runs(run_id,stock_id,status,config,source_commit) values(%s,%s,'running',%s,%s)",
                             (run_id,stock,Jsonb(config),os.getenv('GITHUB_SHA')))
                         result=run_backtest(times,prices,window_minutes=window_minutes,
-                            horizon_minutes=horizon_minutes,style=style,fee_bps=config['fee_bps'],
-                            slippage_bps=config['slippage_bps'],initial_capital=config['initial_capital'],
+                            horizon_minutes=horizon_minutes,style=style,
                             max_folds=max_folds,model_family=model_family,
                             evaluation_start_minute=evaluation_start)
                         with conn.transaction():
@@ -107,11 +106,6 @@ def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds):
                                     values(%s,to_timestamp(%s*60),to_timestamp(%s*60),%s,%s,%s,%s,%s,%s,%s)""",
                                     [(run_id,p['origin_minute'],p['target_minute'],p['origin_price'],p['actual_price'],
                                       p['raw_return'],p['predicted_return'],p['actual_return'],p['signal'],p['model_id']) for p in result['predictions']])
-                                cursor.executemany("""insert into stock_engine.ml_backtest_trades
-                                    (run_id,origin_at,exit_at,side,entry_price,exit_price,gross_return,net_return,capital_before,capital_after)
-                                    values(%s,to_timestamp(%s*60),to_timestamp(%s*60),%s,%s,%s,%s,%s,%s,%s)""",
-                                    [(run_id,t['origin_minute'],t['exit_minute'],t['side'],t['entry_price'],t['exit_price'],
-                                      t['gross_return'],t['net_return'],t['capital_before'],t['capital_after']) for t in result['trades']])
                             candidate=calibration_from_backtest(result['predictions'])
                             conn.execute("""insert into stock_engine.ml_backtest_calibration_candidates(run_id,candidate)
                                 values(%s,%s)""",(run_id,Jsonb(candidate)))
