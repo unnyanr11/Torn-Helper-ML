@@ -60,6 +60,18 @@ def publish_stock(conn, stock_id):
         order by config->>'style',(config->>'window_minutes')::integer,
                  (config->>'horizon_minutes')::integer,config->>'model_family',created_at desc
     """,(stock_id,PUBLISH_WINDOW_HOURS)).fetchall()
+    price_rows=conn.execute("""
+        select floor(extract(epoch from observed_at)/60)::bigint,
+               (array_agg(price order by observed_at desc))[1]
+        from stock_engine.prices
+        where stock_id=%s and observed_at>=now()-(%s * interval '1 day')
+        group by 1 order by 1
+    """,(stock_id,LOOKBACK_DAYS)).fetchall()
+    if len(price_rows)<1000:
+        return 0
+    times=np.asarray([int(r[0]) for r in price_rows],dtype=np.int64)
+    prices=np.asarray([float(r[1]) for r in price_rows],dtype=float)
+    times,prices=validate_series(times,prices)
     by_config={}
     for r in query_rows:
         key=(r[1],int(r[2]),int(r[3]))
@@ -84,18 +96,6 @@ def publish_stock(conn, stock_id):
         calibration_rows=[dict(origin_minute=int(p[0]),raw_return=float(p[1]),
                                predicted_return=float(p[1]),actual_return=float(p[2])) for p in predictions]
         candidate=calibration_from_backtest(calibration_rows,minimum_samples=MIN_FOLDS)
-        price_rows=conn.execute("""
-            select floor(extract(epoch from observed_at)/60)::bigint,
-                   (array_agg(price order by observed_at desc))[1]
-            from stock_engine.prices
-            where stock_id=%s and observed_at>=now()-(%s * interval '1 day')
-            group by 1 order by 1
-        """,(stock_id,LOOKBACK_DAYS)).fetchall()
-        if len(price_rows)<1000:
-            continue
-        times=np.asarray([int(r[0]) for r in price_rows],dtype=np.int64)
-        prices=np.asarray([float(r[1]) for r in price_rows],dtype=float)
-        times,prices=validate_series(times,prices)
         model=fit_live_model(times,prices,window_minutes=window,horizon_minutes=horizon,
                              model_family=family)
         residuals=np.asarray([float(p[2])-float(p[1]) for p in predictions],dtype=float)
