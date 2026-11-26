@@ -13,7 +13,8 @@ class MarketIntelligenceTests(unittest.TestCase):
         up = 100*np.exp(np.cumsum(np.full(100, .003)))
         self.assertEqual(classify_market_regime(up)["regime"], "uptrend")
         rng = np.random.default_rng(12)
-        volatile = 100*np.exp(np.cumsum(rng.normal(0, .03, 200)))
+        returns = np.r_[rng.normal(0, .002, 180), rng.normal(0, .03, 20)]
+        volatile = 100*np.exp(np.cumsum(returns))
         self.assertEqual(classify_market_regime(volatile)["regime"], "high_volatility")
 
     def test_multi_timeframe_requires_at_least_two_valid_series(self):
