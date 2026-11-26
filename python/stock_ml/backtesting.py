@@ -102,18 +102,22 @@ def _prepare_backtest_folds(times, prices, *, window_minutes, horizon_minutes,
             non_overlapping.append(int(candidate))
             last_exit = int(candidate) + horizon_minutes
 
+    # Matured row indices and their target times are sorted. A binary search
+    # gives each fold's exact causal prefix without scanning the full history.
+    matured_indices = np.flatnonzero(matured_all)
+    matured_target_times = all_origins[matured_indices] + horizon_minutes
+
     folds = []
     for origin in non_overlapping:
-        # Exact prefix boundary: the original fold only saw rows whose target
-        # had matured by the current origin. Do not use later labels.
-        eligible = (
-            matured_all & (all_origins + horizon_minutes <= origin)
-        )
-        row_indices = np.flatnonzero(eligible)
-        if len(row_indices) < 240:
+        # Include only labels whose target had matured by this fold's origin.
+        eligible_count = int(np.searchsorted(
+            matured_target_times, origin, side='right'
+        ))
+        if eligible_count < 240:
             continue
+        row_indices = matured_indices[:eligible_count]
 
-        # The origin feature itself must be valid and is evaluated separately.
+        # The origin feature itself is evaluated separately from training rows.
         origin_index = int(np.searchsorted(all_origins, origin))
         if (origin_index >= len(all_origins)
                 or int(all_origins[origin_index]) != origin
@@ -129,8 +133,9 @@ def _prepare_backtest_folds(times, prices, *, window_minutes, horizon_minutes,
         if fit_mask.sum() < 100 or val_mask.sum() < 30:
             continue
 
-        future = float(exact(times, prices, [origin + horizon_minutes])[0])
-        current = float(exact(times, prices, [origin])[0])
+        # These values were already obtained in the vectorized exact-price pass.
+        future = float(targets_all[origin_index])
+        current = float(current_all[origin_index])
         if not math.isfinite(future) or not math.isfinite(current) or current <= 0:
             continue
 
