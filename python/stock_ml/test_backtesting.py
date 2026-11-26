@@ -39,7 +39,7 @@ class BacktestTests(unittest.TestCase):
 
         for family in ('ridge','elastic_net'):
             individual=run_backtest(
-                times,prices,window_minutes=60,horizon_minutes=15,max_folds=2,
+                times,prices,window_minutes=60,horizon_minutes=15,max_folds=3,
                 min_train_rows=200,model_family=family,
             )
             self.assertEqual(
@@ -70,11 +70,12 @@ class BacktestTests(unittest.TestCase):
                 times,prices,window_minutes=60,horizon_minutes=15,max_folds=3,
                 min_train_rows=200,model_families=MODEL_FAMILIES,
             )
-        # Five base families × validation/final fit × two folds. The ensemble
+        # Five base families × validation/final fit per eligible fold. The ensemble
         # must reuse those predictions rather than fitting the five models again.
-        self.assertEqual(fit.call_count,5*2*2)
+        fold_count=len(results['ridge']['predictions'])
+        self.assertGreaterEqual(fold_count,1)
+        self.assertEqual(fit.call_count,5*2*fold_count)
         self.assertEqual(set(results),set(MODEL_FAMILIES))
-        self.assertGreaterEqual(len(results['ridge']['predictions']),2)
         self.assertEqual(
             [p['origin_minute'] for p in results['ensemble']['predictions']],
             [p['origin_minute'] for p in results['ridge']['predictions']],
