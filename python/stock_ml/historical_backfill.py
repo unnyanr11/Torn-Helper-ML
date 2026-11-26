@@ -199,11 +199,11 @@ def backfill_project(project, dsn, days, dry_run=False):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--days", type=int, default=180)
+    parser.add_argument("--days", type=int, default=365)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
-    if not 1 <= args.days <= 180:
-        parser.error("--days must be between 1 and 180 (the ML retention window)")
+    if not 1 <= args.days <= 365:
+        parser.error("--days must be between 1 and 365")
     try:
         projects = json.loads(os.environ.get("STOCK_ML_PROJECTS_JSON", "{}"))
         if set(map(int, projects)) != set(range(1, 19)):
