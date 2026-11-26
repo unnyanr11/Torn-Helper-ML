@@ -38,4 +38,4 @@ jobs:
           STOCK_ML_PROJECTS_JSON: ${{ secrets.STOCK_ML_PROJECTS_JSON }}
           STOCK_IDS: ${{ inputs.stock_ids }}
           GITHUB_SHA: ${{ github.sha }}
-        run: python python/stock_ml/prediction_runner.py
+        run: python python/stock_ml/actions_runner.py
