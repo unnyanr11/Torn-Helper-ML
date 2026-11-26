@@ -14,6 +14,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 from backtesting import MODEL_FAMILIES, calibration_from_backtest, fit_live_model
 from realtime_model import COMBINATIONS, validate_series
+from algorithm_registry import algorithm_id_for_family
 
 MIN_TOTAL_FOLDS = 30
 MIN_SELECTION_FOLDS = 20
@@ -126,7 +127,7 @@ def publish_stock(conn, stock_id):
             "family":family,"source_run":str(selected["run_id"]),
             "trained_through":model["trained_through"],
         },sort_keys=True).encode()).hexdigest()[:24]
-        model.update(stock_id=stock_id,style=style,analysis_minutes=window,
+        model.update(algorithm_id=algorithm_id_for_family(family),stock_id=stock_id,style=style,analysis_minutes=window,
             horizon_minutes=horizon,model_id=model_id,source="walk_forward_backtest_winner",
             source_backtest_run=str(selected["run_id"]),
             metrics={"approved":True,"mae":float(selected["mae"]),
@@ -165,7 +166,7 @@ def publish_stock(conn, stock_id):
         published+=1
         print(json.dumps({"event":"best_model_published","stock_id":stock_id,
             "style":style,"analysis_minutes":window,"horizon_minutes":horizon,
-            "model_family":family,"model_id":model_id,"folds":selected["total_folds"],
+            "algorithm_id":algorithm_id_for_family(family),"model_family":family,"model_id":model_id,"folds":selected["total_folds"],
             "selection_folds":selected["selection_folds"],"holdout_folds":len(holdout_predictions),
             "mae_improvement_pct":round(improvement*100,3),
             "calibration_active":bool(candidate.get("active")),

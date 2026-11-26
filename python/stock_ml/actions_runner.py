@@ -3,6 +3,7 @@ import os
 for name in ('OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS'):
     os.environ[name] = '1'
 import argparse
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import json
@@ -15,6 +16,8 @@ from realtime_model import (COMBINATIONS,SHORT_RANGES,SHORT_HORIZONS,
 from diagnostics import safe_error,project_connection,ConnectionStageError
 from realtime_store import connect,load_payloads,save_payloads,save_results,read_prices,check_outcomes,health
 from clean_series import reconstruct_short_gaps
+from backtesting import fit_live_model
+from algorithm_registry import algorithm_id_for_family
 
 CACHE = Path(os.environ.get('STOCK_ML_PRICE_CACHE','.stock-ml-price-cache'))
 
@@ -110,9 +113,40 @@ def process(project,dsn,force_train=False,force_calibrate=False):
                         for horizon, candidate in fitted.items():
                             key=(stock,style,window,horizon)
                             existing=models.get(key)
-                            # Backtest-selected model-family winners remain authoritative
-                            # until the next completed backtest batch publishes replacements.
+                            # The backtest-selected family remains authoritative. Once its
+                            # fitted parameters are older than a day, refresh that same
+                            # family on current genuine observations rather than falling
+                            # back to a different algorithm or a baseline forecast.
                             if existing and existing.get('source')=='walk_forward_backtest_winner':
+                                if int(times[-1])-int(existing.get('trained_through',0))>1440:
+                                    family=existing.get('model_family')
+                                    try:
+                                        refreshed=fit_live_model(
+                                            clean_times,clean_values,
+                                            window_minutes=window,horizon_minutes=horizon,
+                                            model_family=family,observed_mask=observed_mask,
+                                        )
+                                    except ValueError as exc:
+                                        print(json.dumps(dict(event='selected_model_refresh_skipped',
+                                            stock_id=stock,analysis_minutes=window,
+                                            horizon_minutes=horizon,algorithm_id=existing.get('algorithm_id'),
+                                            reason=str(exc))),flush=True)
+                                        continue
+                                    trained_through=int(refreshed['trained_through'])
+                                    refreshed.update(
+                                        stock_id=stock,style=style,analysis_minutes=window,
+                                        horizon_minutes=horizon,algorithm_id=existing.get('algorithm_id') or algorithm_id_for_family(family),
+                                        model_family=family,source='walk_forward_backtest_winner',
+                                        source_backtest_run=existing.get('source_backtest_run'),
+                                        metrics=existing.get('metrics',{}),
+                                        model_id=hashlib.sha256(json.dumps({
+                                            'previous_model_id':existing.get('model_id'),
+                                            'stock_id':stock,'style':style,'window':window,
+                                            'horizon':horizon,'algorithm_id':existing.get('algorithm_id'),
+                                            'trained_through':trained_through,
+                                        },sort_keys=True).encode()).hexdigest()[:24],
+                                    )
+                                    mapping[key]=refreshed
                                 continue
                             mapping[key]=candidate
                         if mapping:

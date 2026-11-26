@@ -4,6 +4,7 @@ import json
 import math
 import os
 import numpy as np
+from algorithm_registry import FAMILY_TO_ALGORITHM_ID
 
 VERSION = 'minute-adaptive-linear-v1'
 SHORT_RANGES = (15, 30, 60, 120, 180, 360, 720, 1080, 1440, 4320, 10080, 43200)
@@ -274,4 +275,4 @@ def make_result(model,calibration,x,coverage_ok,*,minimum_net_return=None,estima
         raise ValueError('Minimum net return and estimated trading cost must be finite and non-negative')
     required_edge = estimated_cost + minimum_net
     signal='Buy' if approved and value-uncertainty>required_edge else 'Sell' if approved and value+uncertainty< -required_edge else 'Wait'
-    return dict(status='ready',signal=signal,predicted_return=value,raw_return=raw,error_q90=uncertainty,model_id=model['model_id'],validation=model['metrics'],calibrated=cal.get('active',False),calibration_samples=cal.get('samples',0),minimum_expected_net_return=minimum_net,estimated_trading_cost=estimated_cost,minimum_predicted_gross_return=required_edge)
+    return dict(status='ready',signal=signal,predicted_return=value,raw_return=raw,error_q90=uncertainty,model_id=model['model_id'],algorithm_id=model.get('algorithm_id') or FAMILY_TO_ALGORITHM_ID.get(model.get('model_family')),model_family=model.get('model_family'),validation=model['metrics'],calibrated=cal.get('active',False),calibration_samples=cal.get('samples',0),minimum_expected_net_return=minimum_net,estimated_trading_cost=estimated_cost,minimum_predicted_gross_return=required_edge)
