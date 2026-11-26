@@ -4,7 +4,7 @@ import psycopg
 import numpy as np
 from psycopg.types.json import Jsonb
 from backtesting import run_backtest_competition, calibration_from_backtest, MODEL_FAMILIES
-from realtime_model import COMBINATIONS
+from realtime_model import COMBINATIONS, prepare_series
 
 # Exercise the complete live registry: 12 short windows x 6 horizons and
 # 8 long windows x 4 horizons (104 total). Compare all supported backtest
@@ -60,9 +60,13 @@ _WORKER_TIMES = None
 _WORKER_PRICES = None
 
 def _init_backtest_worker(times, prices):
-    global _WORKER_TIMES, _WORKER_PRICES
+    global _WORKER_TIMES, _WORKER_PRICES, _WORKER_PREPARED, _WORKER_FEATURE_CACHE
     _WORKER_TIMES = np.asarray(times, dtype=np.int64)
     _WORKER_PRICES = np.asarray(prices, dtype=float)
+    # Shared immutable inputs/features are built once per worker process and reused
+    # by every horizon job for the same analysis window.
+    _WORKER_PREPARED = prepare_series(_WORKER_TIMES, _WORKER_PRICES)
+    _WORKER_FEATURE_CACHE = {}
 
 def _run_backtest_job(job):
     style, window_minutes, horizon_minutes, max_folds, evaluation_start = job
@@ -75,6 +79,8 @@ def _run_backtest_job(job):
         style=style, max_folds=max_folds,
         model_families=BACKTEST_MODEL_FAMILIES,
         evaluation_start_minute=evaluation_start,
+        prepared=_WORKER_PREPARED,
+        feature_cache=_WORKER_FEATURE_CACHE,
     )
     return job, results
 
