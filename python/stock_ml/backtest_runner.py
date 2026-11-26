@@ -5,7 +5,6 @@ import numpy as np
 from psycopg.types.json import Jsonb
 from backtesting import run_backtest, calibration_from_backtest, MODEL_FAMILIES
 from realtime_model import COMBINATIONS
-from strategy_engine import run_strategy_competition
 
 # Exercise the complete live registry: 12 short windows x 6 horizons and
 # 8 long windows x 4 horizons (104 total). Compare all supported backtest
@@ -125,55 +124,6 @@ def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds):
                         print(json.dumps(dict(stock_id=stock,run_id=str(run_id),model_family=model_family,config=config,
                             status=result['status'],metrics=result['metrics'],calibration_candidate=candidate,
                             calibration_promotion=promotion)))
-            # Technical strategies are evaluated separately from ML regressors.
-            # The same private shard tables are reused; no new grants or RLS changes.
-            strategy_times = [int(value) * 60 for value in times]
-            strategy_start = (int(evaluation_start * 60) if evaluation_start is not None else
-                             strategy_times[int(len(strategy_times) * 0.70)])
-            for horizon_minutes in (60, 180, 360, 720, 1080, 1440):
-                competition = run_strategy_competition(
-                    strategy_times, prices, horizon_steps=horizon_minutes,
-                    bar_seconds=60, fee_bps=10, slippage_bps=5,
-                    minimum_net_return=0.002, max_drawdown=0.15,
-                    evaluation_start=strategy_start)
-                for strategy_name, item in competition['strategies'].items():
-                    if strategy_name.startswith('baseline_'):
-                        continue
-                    run_id = uuid.uuid4()
-                    opportunity = next((row for row in competition.get('opportunity_ranking', [])
-                        if row.get('strategy') == strategy_name), None)
-                    config = dict(style='short', window_minutes=lookback_days * 1440,
-                        horizon_minutes=horizon_minutes, strategy_family=strategy_name,
-                        model_family='technical_strategy', fee_bps=10,
-                        slippage_bps=5, minimum_net_return=0.002,
-                        execution=competition['config']['execution'],
-                        current_market_regime=competition.get('config', {}).get('current_market_regime'),
-                        best_strategy_for_current_regime=competition.get('best_strategy_for_current_regime'),
-                        multi_timeframe_confirmation=competition.get('multi_timeframe_confirmation'),
-                        opportunity_score=(opportunity or {}).get('score'),
-                        opportunity_status=(opportunity or {}).get('status'),
-                        opportunity_probability_basis=competition.get('opportunity_probability_basis'),
-                        risk_controls='0.5% equity risk budget; 15% position cap; regime-scaled volatility stop; close-only trailing stop; 2R minimum target')
-                    conn.execute(
-                        "insert into stock_engine.ml_backtest_runs(run_id,stock_id,status,config,source_commit) values(%s,%s,'running',%s,%s)",
-                        (run_id, stock, Jsonb(config), os.getenv('GITHUB_SHA')))
-                    metrics = item['metrics']
-                    with conn.transaction():
-                        conn.execute(
-                            "update stock_engine.ml_backtest_runs set status='completed',metrics=%s where run_id=%s",
-                            (Jsonb(metrics), run_id))
-                        with conn.cursor() as cursor:
-                            cursor.executemany("""insert into stock_engine.ml_backtest_trades
-                                (run_id,origin_at,exit_at,side,entry_price,exit_price,gross_return,net_return,capital_before,capital_after)
-                                values(%s,to_timestamp(%s*60),to_timestamp(%s*60),'long',%s,%s,%s,%s,%s,%s)""",
-                                [(run_id, int(trade['origin_time']//60), int(trade['exit_time']//60),
-                                  trade['entry_price'], trade['exit_price'], trade['gross_return'],
-                                  trade['net_return'], trade['capital_before'], trade['capital_after'])
-                                 for trade in item['trades']])
-                    print(json.dumps(dict(stock_id=stock, run_id=str(run_id),
-                        strategy=strategy_name, horizon_minutes=horizon_minutes,
-                        status=item['status'], metrics=metrics)))
-
 def main():
     raw=os.getenv('STOCK_ML_PROJECTS_JSON','{}')
     try: projects=json.loads(raw)
