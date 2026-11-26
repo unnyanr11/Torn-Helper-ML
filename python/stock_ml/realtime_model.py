@@ -220,10 +220,50 @@ def calibrate(rows):
     q90=float(np.quantile(abs(actual[split:]-corrected),.9))
     return dict(scale=scale if approved else 1.,bias=bias if approved else 0.,error_q90=q90 if approved else None,samples=len(rows),active=approved)
 
+
+def _tree_value(tree, x, hgb=False):
+    node=0
+    while True:
+        if hgb and tree.get("is_leaf",[])[node]:
+            return float(tree["value"][node])
+        feature=int(tree["feature"][node])
+        if feature<0:
+            return float(tree["value"][node])
+        node=int(tree["left"][node] if float(x[feature])<=float(tree["threshold"][node]) else tree["right"][node])
+
+
+def infer_exported(parameters, x):
+    kind=parameters.get("kind")
+    if kind=="linear":
+        scale=np.asarray(parameters["scale"],dtype=float)
+        safe=np.where(scale>0,scale,1.0)
+        return float(((np.asarray(x,dtype=float)-np.asarray(parameters["mean"],dtype=float))/safe)
+                     @np.asarray(parameters["coef"],dtype=float)+float(parameters["intercept"]))
+    if kind=="forest":
+        return float(np.mean([_tree_value(tree,x) for tree in parameters["trees"]]))
+    if kind=="hist_gradient_boosting":
+        return float(parameters["baseline"]+parameters["learning_rate"]*
+                     sum(_tree_value(tree,x,True) for tree in parameters["trees"]))
+    if kind=="ensemble":
+        return float(np.median([infer_exported(member,x) for member in parameters["members"].values()]))
+    raise ValueError("Unsupported browser inference model format")
+
+
+def infer_model(model, x):
+    parameters=model.get("parameters",{})
+    if model.get("inference_format")=="tree-json-v1" or parameters.get("kind"):
+        return infer_exported(parameters,x)
+    return float(infer(parameters,x))
+
+
 def make_result(model,calibration,x,coverage_ok,*,minimum_net_return=None,estimated_trading_cost=None):
     if not coverage_ok: return dict(status='insufficient_history',signal='Wait',reason='Selected input window is incomplete')
     if not model or model.get('status')!='ready': return dict(status=model.get('status','training') if model else 'training',signal='Wait',reason=model.get('reason','Initial model is training') if model else 'Initial model is training')
-    raw=float(infer(model['parameters'],x)); cal=calibration or dict(scale=1.,bias=0.,error_q90=None,active=False,samples=0); value=raw*cal['scale']+cal['bias']
+    raw=float(infer_model(model,x))
+    cal=calibration or dict(scale=1.,bias=0.,error_q90=None,active=False,samples=0)
+    if cal.get('model_id') and cal.get('model_id')!=model.get('model_id'):
+        cal=dict(scale=1.,bias=0.,error_q90=None,active=False,samples=0)
+    value=raw*cal['scale']+cal['bias']
     if not np.isfinite(value) or abs(value)>.5: return dict(status='unavailable',signal='Wait',reason='Prediction outside supported bounds')
     uncertainty=max(model['metrics']['error_q90'],cal.get('error_q90') or 0.); approved=model['metrics']['approved']
     # Require the net target after costs and the model's uncertainty margin.
