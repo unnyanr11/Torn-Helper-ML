@@ -114,7 +114,8 @@ def main():
     if not 30 <= lookback <= 180 or not 240 <= max_rows <= 10000:
         raise SystemExit("Invalid benchmark lookback or training row cap")
     projects = {int(k): v for k, v in json.loads(os.environ["STOCK_ML_PROJECTS_JSON"]).items()}
-    workers = int(os.getenv("BENCHMARK_WORKERS", "2"))\n    assignments = benchmark_assignments()
+    workers = int(os.getenv("BENCHMARK_WORKERS", "2"))
+    assignments = benchmark_assignments()
     if not 1 <= workers <= 6:
         raise SystemExit("BENCHMARK_WORKERS must be between 1 and 6")
     results, failures = [], []
@@ -145,7 +146,8 @@ def main():
     summary = {
         "lookback_days": lookback, "max_training_rows_per_selector": max_rows,
         "worker_processes": workers,
-        "benchmark_mode": "forced_single_algorithm" if len(set(assignments.values())) == 1 else "per_stock_algorithms",\n        "algorithm_assignments": {str(stock): {"algorithm_id": algorithm_id, "family": ALGORITHM_REGISTRY[algorithm_id]} for stock, algorithm_id in assignments.items()},
+        "benchmark_mode": "forced_single_algorithm" if len(set(assignments.values())) == 1 else "per_stock_algorithms",
+        "algorithm_assignments": {str(stock): {"algorithm_id": algorithm_id, "family": ALGORITHM_REGISTRY[algorithm_id]} for stock, algorithm_id in assignments.items()},
         "stocks_completed": len(results), "failures": failures,
         "selectors_predicted": sum(r["selectors_predicted"] for r in results),
         "selectors_skipped": sum(r["selectors_skipped"] for r in results),
