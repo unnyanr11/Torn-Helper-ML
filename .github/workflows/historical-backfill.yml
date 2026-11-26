@@ -4,15 +4,16 @@ on:
   workflow_dispatch:
     inputs:
       days:
-        description: Historical minute window to backfill (maximum 180 days)
+        description: Historical minute window to backfill (maximum 365 days)
         type: choice
         options:
+          - "365"
           - "180"
           - "90"
           - "30"
           - "14"
           - "7"
-        default: "180"
+        default: "365"
         required: true
       dry_run:
         description: Fetch and validate history without writing to shard databases
@@ -31,7 +32,7 @@ jobs:
   backfill:
     if: github.repository == 'unnyanr11/Torn-Helper-ML' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
