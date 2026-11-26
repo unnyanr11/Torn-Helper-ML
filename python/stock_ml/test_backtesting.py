@@ -18,9 +18,14 @@ class BacktestTests(unittest.TestCase):
             self.assertTrue(np.all(np.isfinite(prediction)))
 
     def test_backtest_matrix_covers_all_registered_live_combinations(self):
-        self.assertEqual(len(COMBINATIONS),72)
-        self.assertEqual(len(set(COMBINATIONS)),72)
+        self.assertEqual(len(COMBINATIONS),36)
+        self.assertEqual(len(set(COMBINATIONS)),36)
         self.assertEqual({style for style, _, _ in COMBINATIONS}, {'short'})
+        self.assertEqual(
+            {window for _, window, _ in COMBINATIONS},
+            {720, 1080, 1440, 4320, 10080, 43200},
+        )
+        self.assertGreaterEqual(min(window for _, window, _ in COMBINATIONS), 720)
 
     def test_competition_reuses_feature_preparation_and_matches_single_family_results(self):
         from unittest.mock import patch
