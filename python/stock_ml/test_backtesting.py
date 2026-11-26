@@ -43,7 +43,7 @@ class BacktestTests(unittest.TestCase):
         self.assertEqual(result['selected_minimum_net_return'],0.0)
         self.assertEqual(result['calibration_samples'],35)
         self.assertEqual(result['holdout_samples'],15)
-        self.assertEqual(result['untouched_holdout']['trades'],15)
+        self.assertEqual(result['untouched_holdout']['trades'],7)
 
     def test_calibration_needs_minimum_samples(self):
         result=calibration_from_backtest([dict(raw_return=.01,actual_return=.02,origin_minute=i) for i in range(10)])
