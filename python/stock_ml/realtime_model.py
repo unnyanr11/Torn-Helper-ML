@@ -13,7 +13,7 @@ SHORT_HORIZONS = tuple(h * 60 for h in (1, 3, 6, 12, 18, 24))
 COMBINATIONS = tuple(('short', r, h)
                      for r in SHORT_RANGES for h in SHORT_HORIZONS)
 RIDGE_ALPHAS = (1.0, 10.0, 100.0, 1000.0)
-# Short-term defaults: 0.1% minimum NET return after configured costs.
+# Short-term defaults: 0.2% minimum NET return after configured costs.
 # Environment overrides configure worker/backtest defaults; no profit ceiling exists.
 ESTIMATED_TRADING_COST = float(os.getenv('SHORT_ESTIMATED_TRADING_COST', '0.002'))
 MIN_EXPECTED_NET_RETURN = float(os.getenv('SHORT_MIN_EXPECTED_NET_RETURN', '0.002'))
