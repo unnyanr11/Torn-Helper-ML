@@ -123,7 +123,7 @@ def run_stock(project, dsn, stock, lookback, max_rows):
             "max": round(float(max(selector_fit_times)), 4) if selector_fit_times else 0.0,
         },
         "ensemble_member_fit_seconds": {name: round(seconds, 3) for name, seconds in sorted(member_fit_seconds.items())},
-        "peak_rss_mb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 2),
+        "worker_process_peak_rss_mb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 2),
         "stock_total_seconds": round(time.perf_counter()-started, 3)
     }
 
@@ -184,10 +184,10 @@ def main():
             for r in results:
                 out.write(f"| {r['stock_id']} | {r['algorithm_id']} — {r['model_family']} | {r['selectors_predicted']}/{r['selectors_total']} | {r['selectors_skipped']} | {r['feature_matrix_builds']} | {r['fit_seconds']:.3f} | {r['inference_seconds']:.3f} | {r['stock_total_seconds']:.3f} |\n")
             out.write(f"\n**Worker processes:** {workers}\n\n**Feature matrix builds:** {summary['feature_matrix_builds']}\n\n**Total wall-clock:** {elapsed:.3f} seconds\n\n**Completed stocks:** {len(results)}/6\n")
-            out.write("\n## Detailed profiling\n\n| Stock | Selector fit median (s) | Selector fit p95 (s) | Peak RSS (MB) | Member fit time (s) |\n|---:|---:|---:|---:|---|\n")
+            out.write("\n## Detailed profiling\n\n| Stock | Selector fit median (s) | Selector fit p95 (s) | Worker process peak RSS (MB) | Member fit time (s) |\n|---:|---:|---:|---:|---|\n")
             for r in results:
                 members = ", ".join(f"{name}: {seconds:.3f}" for name, seconds in r["ensemble_member_fit_seconds"].items()) or "n/a"
-                out.write(f"| {r['stock_id']} | {r['selector_fit_seconds']['median']:.4f} | {r['selector_fit_seconds']['p95']:.4f} | {r['peak_rss_mb']:.2f} | {members} |\n")
+                out.write(f"| {r['stock_id']} | {r['selector_fit_seconds']['median']:.4f} | {r['selector_fit_seconds']['p95']:.4f} | {r['worker_process_peak_rss_mb']:.2f} | {members} |\n")
             if failures:
                 out.write("\n## Failures\n")
                 for f in failures:
