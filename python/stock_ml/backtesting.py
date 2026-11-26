@@ -5,7 +5,7 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import Ridge, ElasticNet
 from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor, HistGradientBoostingRegressor
-from realtime_model import exact, feature_matrix, prepare_series, validate_series, train_range, make_result, MIN_EXPECTED_NET_RETURN
+from realtime_model import exact, feature_matrix, prepare_series, validate_series, train_range, infer
 
 MODEL_FAMILIES=('ridge','elastic_net','random_forest','extra_trees','hist_gradient_boosting','ensemble')
 BASE_FAMILIES=MODEL_FAMILIES[:-1]
@@ -47,14 +47,12 @@ def _metrics(values):
                 rmse=float(np.sqrt(np.mean(a*a))))
 
 def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='short',
-                 fee_bps=10.0,slippage_bps=5.0,initial_capital=10000.0,
-                 max_folds=120,min_train_rows=200,trade_on='signal',model_family='ridge',evaluation_start_minute=None,
-                 minimum_net_return=None):
+                 max_folds=120,min_train_rows=200,model_family='ridge',evaluation_start_minute=None):
     times,prices=validate_series(times,prices)
     if style != 'short' or window_minutes<15 or horizon_minutes<15 or model_family not in MODEL_FAMILIES:
         raise ValueError('Invalid model style, window, horizon or model family')
-    if not 0<=fee_bps<=500 or not 0<=slippage_bps<=500 or initial_capital<=0:
-        raise ValueError('Invalid cost or capital assumption')
+    if max_folds<1 or min_train_rows<1:
+        raise ValueError('Invalid fold or training-row limit')
     stride=15
     candidates=times[(times%stride)==0]
     candidates=candidates[candidates>=times[0]+window_minutes+horizon_minutes+min_train_rows*stride]
@@ -66,12 +64,7 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
     for candidate in candidates:
         if int(candidate)>=last_exit:
             non_overlapping.append(int(candidate)); last_exit=int(candidate)+horizon_minutes
-    predictions=[]; trades=[]; equity=float(initial_capital); peak=equity; max_dd=0.0
-    cost=(fee_bps + 2.0*slippage_bps)/10000.0
-    minimum_net = MIN_EXPECTED_NET_RETURN if minimum_net_return is None else float(minimum_net_return)
-    if not math.isfinite(minimum_net) or minimum_net < 0:
-        raise ValueError('minimum_net_return must be finite and non-negative')
-    required_gross_return = cost + minimum_net
+    predictions=[]
     for origin in non_overlapping:
         end=int(np.searchsorted(times,origin,side='right'))
         train_t,train_p=times[:end],prices[:end]
@@ -82,11 +75,11 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
         if model_family=='ridge':
             fitted=train_range(train_t,train_p,style,window_minutes,[horizon_minutes],prepared).get(horizon_minutes,{})
             if fitted.get('status')!='ready': continue
-            result=make_result(fitted,None,x[0],True,minimum_net_return=minimum_net,estimated_trading_cost=cost)
             validation_mae=float(fitted['metrics']['mae'])
             baseline=float(fitted['metrics']['baseline_mae'])
             approved=bool(fitted['metrics']['approved'])
-            final_prediction=float(result.get('predicted_return',0.0))
+            # Backtests evaluate the model's raw forecast, never the live trading gate.
+            final_prediction=float(infer(fitted['parameters'],x[0]))
         else:
             stride_origins=train_t[(train_t%stride)==0]
             features,feature_ok=feature_matrix(train_t,train_p,stride_origins,window_minutes,prepared)
@@ -109,43 +102,27 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
         current=float(exact(times,prices,[origin])[0])
         if not math.isfinite(future) or not math.isfinite(current): continue
         actual=future/current-1.0
-        signal = (result.get('signal', 'Wait') if model_family == 'ridge' else
-                  ('Buy' if approved and final_prediction > required_gross_return else
-                   'Sell' if approved and final_prediction < -required_gross_return else 'Wait'))
+        signal=('Buy' if approved and final_prediction>0 else
+                'Sell' if approved and final_prediction<0 else 'Wait')
         predictions.append(dict(origin_minute=origin,target_minute=origin+horizon_minutes,
             origin_price=current,actual_price=future,predicted_return=final_prediction,
             raw_return=final_prediction,actual_return=actual,
             predicted_price=current*(1.0+final_prediction),signal=signal,
             model_id=model_family,model_family=model_family,validation_mae=validation_mae,
             validation_baseline_mae=baseline,approved=approved))
-        side=1.0 if signal=='Buy' else 0.0
-        if trade_on=='long_short' and signal=='Sell': side=-1.0
-        if side:
-            gross=side*actual; net=gross-cost; before=equity
-            equity*=max(0.0,1.0+net); peak=max(peak,equity)
-            max_dd=min(max_dd,equity/peak-1.0)
-            trades.append(dict(origin_minute=origin,exit_minute=origin+horizon_minutes,
-                side='long' if side>0 else 'short',entry_price=current,exit_price=future,
-                gross_return=gross,net_return=net,capital_before=before,capital_after=equity))
     actuals=[p['actual_return'] for p in predictions]
     errors=[p['actual_return']-p['predicted_return'] for p in predictions]
-    trade_returns=[t['net_return'] for t in trades]
-    price_errors=[p['predicted_price']-p['actual_price'] for p in predictions]
     directional=[(p['predicted_return']>=0)==(p['actual_return']>=0) for p in predictions]
-    wins=sum(r>0 for r in trade_returns); losses=sum(r<0 for r in trade_returns)
-    sharpe=float(np.mean(trade_returns)/np.std(trade_returns,ddof=1)) if len(trade_returns)>1 and np.std(trade_returns,ddof=1)>0 else None
     return dict(status='completed' if predictions else 'insufficient_history',
         config=dict(style=style,window_minutes=window_minutes,horizon_minutes=horizon_minutes,
-            model_family=model_family,evaluation_start_minute=(int(evaluation_start_minute) if evaluation_start_minute is not None else None),
-            fee_bps=fee_bps,slippage_bps=slippage_bps,
-            minimum_net_return=minimum_net,required_gross_return=required_gross_return,
-            initial_capital=initial_capital,execution='decision-close to exact-horizon close',trade_on=trade_on),
-        metrics=dict(folds=len(predictions),trades=len(trades),total_return=equity/initial_capital-1.0,
-            final_capital=equity,win_rate=wins/len(trades) if trades else None,wins=wins,losses=losses,
-            max_drawdown=max_dd,sharpe_non_annualized=sharpe,prediction_error=_metrics(errors),
-            actual_return=_metrics(actuals),profit_factor=(sum(r for r in trade_returns if r>0)/
-            abs(sum(r for r in trade_returns if r<0))) if losses else (1000.0 if wins else None)),
-        predictions=predictions,trades=trades)
+            model_family=model_family,
+            evaluation_start_minute=(int(evaluation_start_minute) if evaluation_start_minute is not None else None),
+            evaluation_method='walk_forward_prediction_vs_actual_price',
+            signal_rule='forecast_direction_only; no trading-cost threshold'),
+        metrics=dict(folds=len(predictions),prediction_error=_metrics(errors),
+            actual_return=_metrics(actuals),directional_accuracy=(float(np.mean(directional)) if directional else None),
+            directionally_correct=int(sum(directional)),directionally_incorrect=int(len(directional)-sum(directional))),
+        predictions=predictions)
 
 def calibration_from_backtest(predictions,*,minimum_samples=30):
     if len(predictions)<minimum_samples:
