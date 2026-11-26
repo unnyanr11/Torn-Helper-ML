@@ -72,32 +72,24 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
         prepared=prepare_series(train_t,train_p)
         x,valid=feature_matrix(train_t,train_p,[origin],window_minutes,prepared)
         if not bool(valid[0]): continue
-        if model_family=='ridge':
-            fitted=train_range(train_t,train_p,style,window_minutes,[horizon_minutes],prepared).get(horizon_minutes,{})
-            if fitted.get('status')!='ready': continue
-            validation_mae=float(fitted['metrics']['mae'])
-            baseline=float(fitted['metrics']['baseline_mae'])
-            approved=bool(fitted['metrics']['approved'])
-            # Backtests evaluate the model's raw forecast, never the live trading gate.
-            final_prediction=float(infer(fitted['parameters'],x[0]))
-        else:
-            stride_origins=train_t[(train_t%stride)==0]
-            features,feature_ok=feature_matrix(train_t,train_p,stride_origins,window_minutes,prepared)
-            targets=exact(train_t,train_p,stride_origins+horizon_minutes)
-            matured=feature_ok & np.isfinite(targets)
-            origins=stride_origins[matured]; features=features[matured]
-            if len(origins)<240: continue
-            y=targets[matured]/exact(train_t,train_p,origins)-1.0
-            boundary=origins[int(len(origins)*.75)]
-            fit_mask=origins+horizon_minutes<boundary
-            val_mask=origins>=boundary
-            if fit_mask.sum()<100 or val_mask.sum()<30: continue
-            val_y=y[val_mask]
-            val_pred=_family_predict(model_family,features[fit_mask],y[fit_mask],features[val_mask])
-            validation_mae=float(np.mean(np.abs(val_y-val_pred)))
-            baseline=float(np.mean(np.abs(val_y)))
-            approved=bool(baseline>0 and validation_mae<baseline*.98)
-            final_prediction=float(_family_predict(model_family,features,y,x)[0])
+        stride_origins=train_t[train_t%stride==0]
+        features,feature_ok=feature_matrix(train_t,train_p,stride_origins,window_minutes,prepared)
+        targets=exact(train_t,train_p,stride_origins+horizon_minutes)
+        current_prices=exact(train_t,train_p,stride_origins)
+        matured=feature_ok & np.isfinite(targets) & np.isfinite(current_prices) & (current_prices>0)
+        origins=stride_origins[matured]; features=features[matured]
+        if len(origins)<240: continue
+        y=targets[matured]/current_prices[matured]-1.0
+        boundary=origins[int(len(origins)*.75)]
+        fit_mask=origins+horizon_minutes<boundary
+        val_mask=origins>=boundary
+        if fit_mask.sum()<100 or val_mask.sum()<30: continue
+        val_y=y[val_mask]
+        val_pred=_family_predict(model_family,features[fit_mask],y[fit_mask],features[val_mask])
+        validation_mae=float(np.mean(np.abs(val_y-val_pred)))
+        baseline=float(np.mean(np.abs(val_y)))
+        approved=bool(baseline>0 and validation_mae<baseline*.98)
+        final_prediction=float(_family_predict(model_family,features,y,x)[0])
         future=float(exact(times,prices,[origin+horizon_minutes])[0])
         current=float(exact(times,prices,[origin])[0])
         if not math.isfinite(future) or not math.isfinite(current): continue
