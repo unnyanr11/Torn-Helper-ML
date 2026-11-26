@@ -114,7 +114,8 @@ def main():
     if not 30 <= lookback <= 180 or not 240 <= max_rows <= 10000:
         raise SystemExit("Invalid benchmark lookback or training row cap")
     projects = {int(k): v for k, v in json.loads(os.environ["STOCK_ML_PROJECTS_JSON"]).items()}
-    workers = int(os.getenv("BENCHMARK_WORKERS", "2"))\n    assignments = benchmark_assignments()
+    workers = int(os.getenv("BENCHMARK_WORKERS", "2"))
+    assignments = benchmark_assignments()
     if not 1 <= workers <= 6:
         raise SystemExit("BENCHMARK_WORKERS must be between 1 and 6")
     results, failures = [], []
