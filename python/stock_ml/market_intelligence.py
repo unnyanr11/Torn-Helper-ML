@@ -23,9 +23,11 @@ def classify_market_regime(prices, *, short_window=20, long_window=60, volatilit
     rolling_vol = np.asarray([np.std(returns[max(0, i-volatility_window):i], ddof=1)
                               for i in range(volatility_window, len(returns)+1)])
     rolling_vol = rolling_vol[np.isfinite(rolling_vol)]
-    percentile = float(np.mean(rolling_vol <= recent_vol)) if len(rolling_vol) else 0.5
+    historical_vol = rolling_vol[:-1] if len(rolling_vol) > 1 else rolling_vol
+    baseline_vol = float(np.median(historical_vol)) if len(historical_vol) else recent_vol
+    percentile = float(np.mean(historical_vol <= recent_vol)) if len(historical_vol) else 0.5
     trend = 0.6 * short + 0.4 * long
-    if percentile >= 0.85:
+    if percentile >= 0.85 and recent_vol >= max(baseline_vol * 1.5, 0.002):
         regime = "high_volatility"
     elif trend >= 0.015 and short > 0:
         regime = "uptrend"
