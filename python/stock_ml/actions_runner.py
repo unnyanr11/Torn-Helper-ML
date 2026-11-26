@@ -96,7 +96,9 @@ def process(project,dsn,force_train=False,force_calibrate=False):
             cache_save(project,stock,(times,values),watermark)
             if not len(times):
                 continue
-            prepared=prepare_series(times,values)
+            clean_times,clean_values,synthetic_mask,_=reconstruct_short_gaps(times,values)
+            observed_mask=~synthetic_mask
+            prepared=prepare_series(clean_times,clean_values)
             if train_due:
                 for style,ranges,horizons in [('short',SHORT_RANGES,SHORT_HORIZONS)]:
                     for window in ranges:
