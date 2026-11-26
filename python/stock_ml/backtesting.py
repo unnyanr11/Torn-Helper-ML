@@ -322,21 +322,32 @@ def export_estimator(estimator, family):
     raise ValueError("Unsupported exported model family: "+str(family))
 
 
-def fit_live_model(times, prices, *, window_minutes, horizon_minutes, model_family, observed_mask=None):
-    """Fit the selected backtest winner on all matured, genuine observations."""
+def fit_live_model(times, prices, *, window_minutes, horizon_minutes, model_family, observed_mask=None, prepared=None, max_training_rows=None):
+    """Fit the selected winner on matured genuine observations.
+
+    Optional prepared features and row caps let the read-only benchmark exercise
+    the same estimator/inference path without repeating feature preparation.
+    Production callers retain the uncapped default.
+    """
     from sklearn.linear_model import Ridge, ElasticNet
     from sklearn.preprocessing import StandardScaler
     from sklearn.pipeline import make_pipeline
     from sklearn.ensemble import (RandomForestRegressor, ExtraTreesRegressor,
                                   HistGradientBoostingRegressor)
     times,prices=validate_series(times,prices)
-    prepared=prepare_series(times,prices)
+    prepared=prepared if prepared is not None else prepare_series(times,prices)
     origins=times[times%15==0]
     if observed_mask is not None:
         observed_mask=np.asarray(observed_mask,dtype=bool)
         if len(observed_mask)!=len(times):
             raise ValueError("Observed-price mask must match the minute series")
         origins=origins[observed_mask[np.searchsorted(times,origins)]]
+    if max_training_rows is not None:
+        max_training_rows=int(max_training_rows)
+        if max_training_rows<240:
+            raise ValueError("max_training_rows must be at least 240")
+        if len(origins)>max_training_rows:
+            origins=origins[np.linspace(0,len(origins)-1,max_training_rows).astype(int)]
     features,valid=feature_matrix(times,prices,origins,window_minutes,prepared)
     targets=exact(times,prices,origins+horizon_minutes)
     current=exact(times,prices,origins)
