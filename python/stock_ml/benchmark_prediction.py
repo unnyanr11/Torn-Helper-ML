@@ -1,4 +1,4 @@
-import json, os, time
+import json, os, time, platform, resource, sys
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
@@ -71,21 +71,32 @@ def run_stock(project, dsn, stock, lookback, max_rows):
         )
     prep_s = time.perf_counter() - prep
     fit_s = infer_s = 0.0
+    selector_fit_times = []
+    member_fit_seconds = Counter()
     predicted = 0
     skipped = Counter()
     for style, window, horizon in COMBINATIONS:
         t0 = time.perf_counter()
         try:
+            member_profile = {}
             model = fit_live_model(times, prices, window_minutes=window,
                 horizon_minutes=horizon, model_family=family,
                 observed_mask=observed, prepared=prepared,
-                max_training_rows=max_rows, feature_data=feature_cache[window])
+                max_training_rows=max_rows, feature_data=feature_cache[window],
+                fit_profile=member_profile)
         except ValueError as exc:
-            fit_s += time.perf_counter() - t0
+            elapsed = time.perf_counter() - t0
+            fit_s += elapsed
+            selector_fit_times.append(elapsed)
+            for member, seconds in member_profile.items():
+                member_fit_seconds[member] += seconds
             skipped[str(exc)] += 1
             continue
         elapsed = time.perf_counter() - t0
         fit_s += elapsed
+        selector_fit_times.append(elapsed)
+        for member, seconds in member_profile.items():
+            member_fit_seconds[member] += seconds
         t1 = time.perf_counter()
         x, valid = latest_cache[window]
         if not bool(valid[0]):
@@ -105,6 +116,14 @@ def run_stock(project, dsn, stock, lookback, max_rows):
         "feature_matrix_builds": len(feature_cache) * 2,
         "fetch_seconds": round(fetch_s, 3), "preprocessing_seconds": round(prep_s, 3),
         "fit_seconds": round(fit_s, 3), "inference_seconds": round(infer_s, 3),
+        "selector_fit_seconds": {
+            "count": len(selector_fit_times),
+            "median": round(float(np.median(selector_fit_times)), 4) if selector_fit_times else 0.0,
+            "p95": round(float(np.percentile(selector_fit_times, 95)), 4) if selector_fit_times else 0.0,
+            "max": round(float(max(selector_fit_times)), 4) if selector_fit_times else 0.0,
+        },
+        "ensemble_member_fit_seconds": {name: round(seconds, 3) for name, seconds in sorted(member_fit_seconds.items())},
+        "peak_rss_mb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 2),
         "stock_total_seconds": round(time.perf_counter()-started, 3)
     }
 
@@ -146,6 +165,7 @@ def main():
     summary = {
         "lookback_days": lookback, "max_training_rows_per_selector": max_rows,
         "worker_processes": workers,
+        "runtime_environment": {"python": sys.version.split()[0], "platform": platform.platform(), "numpy": np.__version__},
         "benchmark_mode": "forced_single_algorithm" if len(set(assignments.values())) == 1 else "per_stock_algorithms",
         "algorithm_assignments": {str(stock): {"algorithm_id": algorithm_id, "family": ALGORITHM_REGISTRY[algorithm_id]} for stock, algorithm_id in assignments.items()},
         "stocks_completed": len(results), "failures": failures,
@@ -164,6 +184,10 @@ def main():
             for r in results:
                 out.write(f"| {r['stock_id']} | {r['algorithm_id']} — {r['model_family']} | {r['selectors_predicted']}/{r['selectors_total']} | {r['selectors_skipped']} | {r['feature_matrix_builds']} | {r['fit_seconds']:.3f} | {r['inference_seconds']:.3f} | {r['stock_total_seconds']:.3f} |\n")
             out.write(f"\n**Worker processes:** {workers}\n\n**Feature matrix builds:** {summary['feature_matrix_builds']}\n\n**Total wall-clock:** {elapsed:.3f} seconds\n\n**Completed stocks:** {len(results)}/6\n")
+            out.write("\n## Detailed profiling\n\n| Stock | Selector fit median (s) | Selector fit p95 (s) | Peak RSS (MB) | Member fit time (s) |\n|---:|---:|---:|---:|---|\n")
+            for r in results:
+                members = ", ".join(f"{name}: {seconds:.3f}" for name, seconds in r["ensemble_member_fit_seconds"].items()) or "n/a"
+                out.write(f"| {r['stock_id']} | {r['selector_fit_seconds']['median']:.4f} | {r['selector_fit_seconds']['p95']:.4f} | {r['peak_rss_mb']:.2f} | {members} |\n")
             if failures:
                 out.write("\n## Failures\n")
                 for f in failures:
