@@ -1,9 +1,9 @@
-name: Launch all Python prediction batches at 03:10 IST (one time)
+name: Launch all Python prediction batches at 03:13 IST (one time)
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '10 3 * * *'
+    - cron: '13 3 * * *'
       timezone: 'Asia/Kolkata'
 
 permissions:
