@@ -13,7 +13,7 @@ Short-term, backend-only stock prediction and model-research worker for [Torn-He
 
 The live registry contains 12 analysis windows (15 minutes, 30 minutes, 1, 2, 3, 6, 12, 18, 24, 72, 168 and 720 hours) and six horizons (1, 3, 6, 12, 18 and 24 hours): 72 combinations per stock. All 35 stocks are distributed over 18 configured stock-data projects. Projects 1–17 own two stock IDs each; project 18 owns stock 35.
 
-The feature-based linear competition compares Ridge, ElasticNet and a Ridge/ElasticNet blend over chronological training/selection/holdout periods. It purges overlapping future labels for the selected horizon, evaluates matured outcomes and retains a no-change baseline. Model selection and calibration are research controls, not a guarantee that a forecast will be profitable.
+The backtest competition compares Ridge, ElasticNet, Random Forest, Extra Trees, Histogram Gradient Boosting and a median ensemble on identical chronological walk-forward origins. It purges overlapping future labels, evaluates matured outcomes against a no-change baseline, and does not include fees, slippage, trading simulation or profit gates. The winning family is refit on matured observations and exported as a JSON inference payload that the main app's browser Python worker can evaluate.
 
 ## Five-minute prediction workflow
 
@@ -187,50 +187,56 @@ history, all eligible out-of-sample history currently available in each shard
 (up to the 180-day retention limit), and up to 30 walk-forward folds per
 configuration. Forecast configurations are limited to the short-term registry; long-term forecasting is maintained in the dedicated repository.
 
-Backtest predictions, trades, metrics and calibration candidates are stored
-in the separate `stock_engine.ml_backtest_*` tables. Ridge-compatible
-candidates can be promoted to live calibration only after at least 30 matured
-live-forward checks and at least a 2% MAE improvement against the current
-calibration. Other model families are comparison-only and are not wired into
-the live predictor. No RLS policies are changed.
+Backtest predictions and model-family metrics are stored in the private
+`stock_engine.ml_backtest_*` tables. After all stock jobs complete,
+`python/stock_ml/backtest_publish.py` chooses a winner independently for every
+stock, analysis window and forecast horizon. A winner must have at least 30
+shared out-of-sample folds and improve MAE over the no-change baseline by at
+least 2%. Lowest MAE wins; directional accuracy and RMSE break ties. This is
+strictly an accuracy comparison and does not use fees, slippage, trade counts,
+profit factor, portfolio returns or drawdown.
+
+The selected model family is refit using only matured observations and saved
+to the existing private `stock_engine.ml_v2_models` registry. Ridge and
+ElasticNet are exported as standardized linear coefficients; Random Forest
+and Extra Trees as JSON tree arrays; Histogram Gradient Boosting as its
+baseline plus serialized trees; and the ensemble as the median of its five
+exported member predictions. The main Torn-Helper browser worker evaluates
+these payloads locally. It polls the authenticated Edge Function for the
+current model registry with its existing 15-second forecast refresh, so a
+newly published model is picked up automatically without exposing database
+credentials or moving model fitting into the browser.
+
+Calibration uses only the selected winner's chronological walk-forward
+predictions. The first 70% fits a bounded scale/bias correction; the later
+30% is an untouched calibration holdout. The correction activates only when
+it improves holdout MAE. Calibration is tagged with the exact model ID, so an
+older model's correction can never be applied to a newly selected model. If
+no candidate passes the accuracy eligibility rules, the last approved model
+remains active. No RLS policies are changed.
 
 Each stock job has a 165-minute timeout. The workflow allows up to eight
 concurrent stock jobs to limit database connection pressure. Workflow-level
 concurrency prevents overlapping full batches; a dispatched run may wait for
 the previous batch to finish.
 
-The report job runs after the stock matrix and stores model rankings in
-`stock_engine.ml_backtest_reports`. Before the matrix starts, the workflow now runs
-`python/stock_ml/backtest_setup.py` across every configured shard. It validates
-each shard assignment, applies the additive DDL in
-`python/stock_ml/backtest_setup.sql`, and verifies that
-`stock_engine.ml_backtest_reports` exists. This makes setup repeatable and
-idempotent, and does not modify existing RLS policies.
+Before the matrix starts, the workflow runs `python/stock_ml/backtest_setup.py`
+across every configured shard. It validates each shard assignment, applies
+the additive DDL in `python/stock_ml/backtest_setup.sql`, and verifies the
+private backtest report tables. This setup is repeatable and idempotent and
+does not modify existing RLS policies.
 
 ## Backtest performance reporting
 
-After the stock matrix finishes and only when schema provisioning succeeded,
-the workflow runs `python/stock_ml/backtest_reporting.py` against each configured shard. It
-evaluates completed runs from the preceding eight hours and stores a compact
-JSON report in `stock_engine.ml_backtest_reports`. Reports include each
-configuration's sample count, MAE, RMSE, zero-return baseline MAE, directional
-accuracy, mean error and available trade results.
-
-A configuration is eligible for ranking only when it has at least 30
-out-of-sample predictions, at least five trades, positive net compounded
-return, profit factor above 1.0, maximum drawdown no greater than 15%, and MAE
-improves on the zero-return baseline by at least 2%. Eligible models are ranked
-by net total return divided by the larger of absolute maximum drawdown or 1%,
-then by profit factor, MAE improvement and directional accuracy. Models with
-no trades, negative net returns or excessive drawdown are rejected rather than
-being rewarded for low drawdown alone. The report records the strongest
-eligible model per stock and per stock/window/horizon configuration, as well
-as all evaluated rankings and risk metrics.
-Insufficient samples and baseline underperformance are not presented as
-successful models. These rankings are research outputs only: they do not
-change the live predictor or automatically promote non-Ridge model families.
-The report table is private and additive; installing the updated
-`backtest_setup.sql` creates it without changing existing RLS policies.
+After the stock matrix and model publication finish, the workflow runs
+`python/stock_ml/backtest_reporting.py`. It evaluates completed runs from the
+preceding eight hours and stores accuracy-only reports in
+`stock_engine.ml_backtest_reports`, including sample count, MAE, RMSE,
+zero-return baseline MAE, directional accuracy and mean error. A configuration
+is eligible only with at least 30 predictions and at least 2% MAE improvement
+over the no-change baseline. The report includes the best eligible model per
+stock and per selector combination, plus the full rankings. The table remains
+private and additive.
 
 ## Tests
 
