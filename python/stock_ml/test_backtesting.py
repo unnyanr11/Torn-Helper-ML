@@ -27,15 +27,15 @@ class BacktestTests(unittest.TestCase):
         import backtesting
 
         rng=np.random.default_rng(231)
-        times=np.arange(0,12000,dtype=np.int64)
+        times=np.arange(0,20000,dtype=np.int64)
         prices=100*np.exp(np.cumsum(rng.normal(0.00001,0.0002,len(times))))
         with patch('backtesting.prepare_series', wraps=backtesting.prepare_series) as prepare:
             grouped=run_backtest_competition(
-                times,prices,window_minutes=60,horizon_minutes=15,max_folds=2,
+                times,prices,window_minutes=60,horizon_minutes=15,max_folds=3,
                 min_train_rows=200,model_families=('ridge','elastic_net'),
             )
             # Feature preparation occurs once per eligible fold, not once per family.
-            self.assertEqual(prepare.call_count,2)
+            self.assertEqual(prepare.call_count,3)
 
         for family in ('ridge','elastic_net'):
             individual=run_backtest(
@@ -74,6 +74,7 @@ class BacktestTests(unittest.TestCase):
         # must reuse those predictions rather than fitting the five models again.
         self.assertEqual(fit.call_count,5*2*2)
         self.assertEqual(set(results),set(MODEL_FAMILIES))
+        self.assertGreaterEqual(len(results['ridge']['predictions']),2)
         self.assertEqual(
             [p['origin_minute'] for p in results['ensemble']['predictions']],
             [p['origin_minute'] for p in results['ridge']['predictions']],
