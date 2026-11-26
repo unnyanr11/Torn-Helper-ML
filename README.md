@@ -138,6 +138,33 @@ The prediction worker is not a guarantee of profitability. Forecasts are
 estimates, not financial advice, and actual execution prices, spreads and
 liquidity may differ from stored closes.
 
+## Minute-series quality and reconstruction
+
+The short-term worker preserves raw provider observations in
+stock_engine.prices and reconstructs only short gaps in memory when preparing
+model features. It does not write estimated prices back into the raw table.
+
+- One or two missing minutes: straight-line interpolation between the two
+  genuine endpoint observations (for a single missing minute this is their
+  arithmetic average).
+- Three to five missing minutes: endpoint-anchored slope bridge. Every
+  reconstructed point is explicitly marked synthetic in the worker's
+  in-memory provenance mask.
+- More than five missing minutes: never automatically filled. The gap remains
+  unresolved and the existing feature-coverage checks can reject windows
+  affected by it.
+
+Training origins and future target labels must both be genuine observations.
+Synthetic values may contribute to the surrounding feature window, but they
+are excluded from supervised target labels. The ordinary backtest continues
+to use the raw genuine series, so interpolated values cannot create realized
+profits or improve reported test outcomes. The raw price cache also stores
+only provider observations.
+
+The cleaner is covered by unit tests for one-, two-, three-to-five-, and
+greater-than-five-minute gaps, provenance flags, and invalid input. This
+reconstruction is a feature-continuity aid, not recovered market truth.
+
 ## Backtesting (automatic two-hour retrigger loop)
 
 `.github/workflows/backtest.yml` starts a separate retrigger job alongside the

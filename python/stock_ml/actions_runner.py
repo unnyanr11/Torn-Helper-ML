@@ -14,6 +14,7 @@ from realtime_model import (COMBINATIONS,SHORT_RANGES,SHORT_HORIZONS,
     prepare_series,feature_matrix,train_range,make_result,baseline_forecast,calibrate,validate_series)
 from diagnostics import safe_error,project_connection,ConnectionStageError
 from realtime_store import connect,load_payloads,save_payloads,save_results,read_prices,check_outcomes,health
+from clean_series import reconstruct_short_gaps
 
 CACHE = Path(os.environ.get('STOCK_ML_PRICE_CACHE','.stock-ml-price-cache'))
 
@@ -96,11 +97,13 @@ def process(project,dsn,force_train=False,force_calibrate=False):
             cache_save(project,stock,(times,values),watermark)
             if not len(times):
                 continue
-            prepared=prepare_series(times,values)
+            clean_times,clean_values,synthetic_mask,_=reconstruct_short_gaps(times,values)
+            observed_mask=~synthetic_mask
+            prepared=prepare_series(clean_times,clean_values)
             if train_due:
                 for style,ranges,horizons in [('short',SHORT_RANGES,SHORT_HORIZONS)]:
                     for window in ranges:
-                        fitted=train_range(times,values,style,window,horizons,prepared)
+                        fitted=train_range(clean_times,clean_values,style,window,horizons,prepared,observed_mask)
                         for model in fitted.values():
                             model.setdefault('trained_through',int(times[-1]))
                         mapping={(stock,style,window,h):m for h,m in fitted.items()}
@@ -113,7 +116,7 @@ def process(project,dsn,force_train=False,force_calibrate=False):
             features={}
             for style,window,horizon in COMBINATIONS:
                 if window not in features:
-                    x,valid=feature_matrix(times,values,[origin],window,prepared)
+                    x,valid=feature_matrix(clean_times,clean_values,[origin],window,prepared)
                     features[window]=(x[0],bool(valid[0]))
                 x,valid=features[window]
                 key=(stock,style,window,horizon)
@@ -122,7 +125,7 @@ def process(project,dsn,force_train=False,force_calibrate=False):
                     model=dict(status='training',reason='Waiting for a recently trained Python model')
                 result=make_result(model,corrections.get(key),x,valid)
                 if result['status'] != 'ready':
-                    result=baseline_forecast(times,values,origin,window,horizon)
+                    result=baseline_forecast(clean_times,clean_values,origin,window,horizon)
                 result.update(stock_id=stock,style=style,analysis_minutes=window,horizon_minutes=horizon,
                     origin_minute=origin,origin_price=float(values[-1]),computed_at=time.time(),
                     max_age_minutes=15,prediction_engine='python',execution_mode='github-actions')
