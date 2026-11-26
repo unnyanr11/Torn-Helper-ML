@@ -62,6 +62,48 @@ class BacktestTests(unittest.TestCase):
                 rtol=0,atol=1e-12,
             )
 
+    def test_feature_cache_is_reused_across_horizons_without_changing_results(self):
+        from unittest.mock import patch
+        import backtesting
+
+        rng=np.random.default_rng(9231)
+        times=np.arange(0,24000,dtype=np.int64)
+        prices=100*np.exp(np.cumsum(rng.normal(0.00001,0.0002,len(times))))
+        prepared=backtesting.prepare_series(times,prices)
+        cache={}
+        original=backtesting.feature_matrix
+        with patch('backtesting.feature_matrix', wraps=original) as build:
+            first=run_backtest_competition(
+                times,prices,window_minutes=720,horizon_minutes=15,max_folds=3,
+                min_train_rows=200,model_families=('ridge',),
+                prepared=prepared,feature_cache=cache,
+            )
+            self.assertEqual(build.call_count,1)
+            second=run_backtest_competition(
+                times,prices,window_minutes=720,horizon_minutes=30,max_folds=3,
+                min_train_rows=200,model_families=('ridge',),
+                prepared=prepared,feature_cache=cache,
+            )
+            self.assertEqual(build.call_count,1)
+        uncached=run_backtest_competition(
+            times,prices,window_minutes=720,horizon_minutes=30,max_folds=3,
+            min_train_rows=200,model_families=('ridge',),
+        )
+        self.assertEqual(
+            [p['origin_minute'] for p in second['ridge']['predictions']],
+            [p['origin_minute'] for p in uncached['ridge']['predictions']],
+        )
+        np.testing.assert_allclose(
+            [p['predicted_return'] for p in second['ridge']['predictions']],
+            [p['predicted_return'] for p in uncached['ridge']['predictions']],
+            rtol=0,atol=0,
+        )
+        np.testing.assert_allclose(
+            [p['actual_return'] for p in second['ridge']['predictions']],
+            [p['actual_return'] for p in uncached['ridge']['predictions']],
+            rtol=0,atol=0,
+        )
+
     def test_ensemble_reuses_base_model_fits(self):
         from unittest.mock import patch
         import backtesting
