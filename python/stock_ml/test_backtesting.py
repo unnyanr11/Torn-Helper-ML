@@ -104,6 +104,28 @@ class BacktestTests(unittest.TestCase):
             rtol=0,atol=0,
         )
 
+    def test_walk_forward_folds_keep_shared_feature_arrays_instead_of_copies(self):
+        import backtesting
+        rng=np.random.default_rng(9232)
+        times=np.arange(0,24000,dtype=np.int64)
+        prices=100*np.exp(np.cumsum(rng.normal(0.00001,0.0002,len(times))))
+        prepared=backtesting.prepare_series(times,prices)
+        cache={}
+        folds=backtesting._prepare_backtest_folds(
+            times,prices,window_minutes=720,horizon_minutes=15,
+            evaluation_start_minute=None,max_folds=3,min_train_rows=200,
+            prepared=prepared,feature_cache=cache,
+        )
+        self.assertTrue(folds)
+        shared_features=cache[720][1]
+        for fold in folds:
+            self.assertIs(fold['features_all'],shared_features)
+            self.assertNotIn('x_fit',fold)
+            self.assertNotIn('x_validation',fold)
+            self.assertNotIn('x_full',fold)
+            self.assertIn('fit_indices',fold)
+            self.assertIn('validation_indices',fold)
+
     def test_ensemble_reuses_base_model_fits(self):
         from unittest.mock import patch
         import backtesting
