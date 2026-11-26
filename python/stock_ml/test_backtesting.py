@@ -57,6 +57,28 @@ class BacktestTests(unittest.TestCase):
                 rtol=0,atol=1e-12,
             )
 
+    def test_ensemble_reuses_base_model_fits(self):
+        from unittest.mock import patch
+        import backtesting
+
+        rng=np.random.default_rng(232)
+        times=np.arange(0,12000,dtype=np.int64)
+        prices=100*np.exp(np.cumsum(rng.normal(0.00001,0.0002,len(times))))
+        original_fit=backtesting._fit_predict
+        with patch('backtesting._fit_predict', wraps=original_fit) as fit:
+            results=run_backtest_competition(
+                times,prices,window_minutes=60,horizon_minutes=15,max_folds=2,
+                min_train_rows=200,model_families=MODEL_FAMILIES,
+            )
+        # Five base families × validation/final fit × two folds. The ensemble
+        # must reuse those predictions rather than fitting the five models again.
+        self.assertEqual(fit.call_count,5*2*2)
+        self.assertEqual(set(results),set(MODEL_FAMILIES))
+        self.assertEqual(
+            [p['origin_minute'] for p in results['ensemble']['predictions']],
+            [p['origin_minute'] for p in results['ridge']['predictions']],
+        )
+
     def test_backtest_rejects_long_term_style(self):
         with self.assertRaisesRegex(ValueError, 'Invalid model style'):
             run_backtest(np.arange(1000), np.ones(1000), window_minutes=60,
