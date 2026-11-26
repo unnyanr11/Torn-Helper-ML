@@ -1,6 +1,10 @@
 name: Walk-forward stock backtests
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/backtest.yml'
   workflow_dispatch:
     inputs:
       lookback_days:
@@ -85,7 +89,7 @@ jobs:
       - name: Create and verify private backtest schema on all shards
         env:
           STOCK_ML_PROJECTS_JSON: ${{ secrets.STOCK_ML_PROJECTS_JSON }}
-          SHORT_MIN_EXPECTED_NET_RETURN: ${{ vars.SHORT_MIN_EXPECTED_NET_RETURN || '0.001' }}
+          SHORT_MIN_EXPECTED_NET_RETURN: ${{ vars.SHORT_MIN_EXPECTED_NET_RETURN || '0.002' }}
           SHORT_ESTIMATED_TRADING_COST: ${{ vars.SHORT_ESTIMATED_TRADING_COST || '0.002' }}
         run: python python/stock_ml/backtest_setup.py
 
