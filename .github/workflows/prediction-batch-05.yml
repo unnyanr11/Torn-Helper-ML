@@ -1,0 +1,28 @@
+name: Python stock prediction batch 05 (stocks 25–30)
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_train:
+        description: Force model retraining for this batch
+        required: true
+        default: false
+        type: boolean
+      force_calibrate:
+        description: Force calibration for this batch
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  run-batch:
+    uses: ./.github/workflows/prediction-batch-reusable.yml
+    with:
+      batch_id: "05"
+      project_numbers: "13,14,15"
+      force_train: ${{ inputs.force_train }}
+      force_calibrate: ${{ inputs.force_calibrate }}
+    secrets: inherit
