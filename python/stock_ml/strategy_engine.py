@@ -242,7 +242,7 @@ def run_strategy_competition(times, prices, *, horizon_steps, bar_seconds,
             profit_factor=pf, max_drawdown=max_dd, sharpe_trade=sharpe,
             exposure=(exposure_bars / max(1, len(p) - start)),
             eligible=(len(trades) >= min_trades and mean_net is not None
-                and mean_net >= minimum_net_return and equity > initial_capital
+                and mean_net > 0.0 and equity > initial_capital
                 and pf is not None and pf > 1.0 and max_dd >= -max_drawdown))
         results[name] = dict(status="eligible" if metrics["eligible"] else
             ("insufficient_trades" if len(trades) < min_trades else "rejected"),
