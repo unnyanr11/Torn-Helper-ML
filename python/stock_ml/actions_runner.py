@@ -70,7 +70,7 @@ def process(project,dsn,force_train=False,force_calibrate=False,stock_filter=Non
         models=load_payloads(conn,'models')
         corrections=load_payloads(conn,'calibration')
         stocks=[r[0] for r in conn.execute('select stock_id from stock_engine.stocks order by stock_id').fetchall()]\n        if stock_filter is not None:\n            stocks=[stock for stock in stocks if stock in stock_filter]
-        if not stocks or any(s not in (project*2-1,project*2) or s>35 for s in stocks):
+        if stock_filter is not None:\n            stocks=[stock for stock in stocks if stock in stock_filter]\n        if not stocks or any(s not in (project*2-1,project*2) or s>35 for s in stocks):
             raise ValueError('Invalid stock assignment')
         # Turn off the legacy SQL baseline in this stock project.
         conn.execute("select cron.unschedule(jobid) from cron.job where jobname='stock-engine-analysis'")
