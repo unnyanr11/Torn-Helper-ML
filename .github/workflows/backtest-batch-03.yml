@@ -1,4 +1,4 @@
-name: Stock 09 independent backtest
+name: Backtest batch 03 (stocks 9,10,11,12)
 
 on:
   workflow_dispatch:
@@ -28,10 +28,11 @@ permissions:
   contents: read
 
 jobs:
-  run-stock-9:
-    uses: ./.github/workflows/backtest-stock-reusable.yml
+  run-batch:
+    uses: ./.github/workflows/backtest-batch-reusable.yml
     with:
-      stock_id: 9
+      batch_id: "03"
+      stock_ids: "9,10,11,12"
       lookback_days: ${{ fromJSON(inputs.lookback_days) }}
       evaluation_days: ${{ fromJSON(inputs.evaluation_days) }}
       max_folds: ${{ fromJSON(inputs.max_folds) }}

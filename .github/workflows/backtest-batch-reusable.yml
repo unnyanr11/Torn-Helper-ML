@@ -1,11 +1,14 @@
-name: Reusable independent stock backtest
+name: Reusable distributed backtest batch
 
 on:
   workflow_call:
     inputs:
-      stock_id:
+      batch_id:
         required: true
-        type: number
+        type: string
+      stock_ids:
+        required: true
+        type: string
       lookback_days:
         required: false
         default: 180
@@ -27,12 +30,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: torn-helper-ml-independent-stock-${{ inputs.stock_id }}
+  group: torn-helper-ml-distributed-batch-${{ inputs.batch_id }}
   cancel-in-progress: false
 
 jobs:
   backtest:
-    name: Independent backtest stock ${{ inputs.stock_id }}
+    name: Backtest batch ${{ inputs.batch_id }} (stocks ${{ inputs.stock_ids }})
     runs-on: ubuntu-24.04
     timeout-minutes: 165
     steps:
@@ -46,10 +49,10 @@ jobs:
           cache-dependency-path: python/stock_ml/requirements.txt
       - name: Install dependencies
         run: python -m pip install -r python/stock_ml/requirements.txt
-      - name: Run stock-specific walk-forward backtest
+      - name: Run batch walk-forward backtest
         env:
           STOCK_ML_PROJECTS_JSON: ${{ secrets.STOCK_ML_PROJECTS_JSON }}
-          STOCK_IDS: ${{ inputs.stock_id }}
+          STOCK_IDS: ${{ inputs.stock_ids }}
           LOOKBACK_DAYS: ${{ inputs.lookback_days }}
           EVALUATION_DAYS: ${{ inputs.evaluation_days }}
           MAX_FOLDS: ${{ inputs.max_folds }}
