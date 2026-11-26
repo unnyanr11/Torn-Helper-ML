@@ -46,6 +46,34 @@ The worker processes up to four shard projects concurrently and has a 12-minute
 job limit. It is a finite scheduled job, not an always-on server. Five-minute
 scheduling is best-effort: GitHub may delay or drop scheduled runs.
 
+## Aggressive historical minute-price backfill
+
+Run `.github/workflows/historical-backfill.yml` manually from the Actions tab
+to fill missing minute observations directly in SG1-SG18. The default is the
+full 180-day short-term retention window. SG1-SG17 each process their two
+assigned stocks; SG18 processes stock 35. The worker validates each database's
+`stock_engine.settings` project number and exact stock assignment before
+writing.
+
+The backfill reads the public Tornsy historical endpoint at
+`https://tornsy.com/api/{ticker}?interval=m1&from=...&to=...&limit=2000`.
+It requests 1,800-minute non-overlapping windows, retries transient provider
+errors with backoff, and rate-limits requests globally across shards. It inserts
+only real, minute-aligned observations and uses conflict-safe inserts, so
+existing live observations are not overwritten. Missing source minutes remain
+missing; the worker never interpolates or fabricates prices.
+
+All writes go to each stock's assigned `stock_engine.prices` table. No price
+history is written to the main Torn-Helper database, and the backfill does not
+alter RLS policies. A dry-run option fetches and validates the provider data
+without writing. The workflow requires the existing
+`STOCK_ML_PROJECTS_JSON` Actions secret to contain all 18 shard connection
+URLs. Inspect the per-stock fetched/inserted counts and the final shard summary
+in the workflow logs. Tornsy's documented endpoint supports minute history,
+time-bounded requests and a maximum page limit of 2,000 rows; provider
+availability and actual historical coverage determine how many rows can be
+recovered.
+
 ## Required setup
 
 1. Add the Actions repository secret `STOCK_ML_PROJECTS_JSON`. It must be a
