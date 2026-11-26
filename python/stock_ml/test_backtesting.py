@@ -25,9 +25,23 @@ class BacktestTests(unittest.TestCase):
             run_backtest(np.arange(1000), np.ones(1000), window_minutes=60,
                          horizon_minutes=60, style='long')
 
-    def test_rejects_invalid_costs(self):
-        with self.assertRaises(ValueError):
-            run_backtest(np.arange(1000),np.ones(1000),window_minutes=60,horizon_minutes=60,fee_bps=999)
+    def test_backtest_api_has_no_trading_cost_or_portfolio_parameters(self):
+        import inspect
+        parameters=set(inspect.signature(run_backtest).parameters)
+        self.assertFalse({'fee_bps','slippage_bps','minimum_net_return','initial_capital','trade_on'} & parameters)
+
+    def test_backtest_reports_prediction_accuracy_without_trade_simulation(self):
+        rng=np.random.default_rng(23)
+        times=np.arange(0,12000,dtype=np.int64)
+        prices=100*np.exp(np.cumsum(rng.normal(0.00001,0.0002,len(times))))
+        result=run_backtest(times,prices,window_minutes=60,horizon_minutes=15,
+                            max_folds=3,min_train_rows=200,model_family='ridge')
+        self.assertEqual(result['status'],'completed')
+        self.assertIn('directional_accuracy',result['metrics'])
+        self.assertNotIn('trades',result)
+        self.assertNotIn('total_return',result['metrics'])
+        self.assertNotIn('fee_bps',result['config'])
+        self.assertNotIn('slippage_bps',result['config'])
 
     def test_calibration_needs_minimum_samples(self):
         result=calibration_from_backtest([dict(raw_return=.01,actual_return=.02,origin_minute=i) for i in range(10)])
