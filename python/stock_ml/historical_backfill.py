@@ -94,14 +94,17 @@ def fetch_chunk(ticker, start_ts, end_ts, opener=urlopen, limiter=rate_limit, sl
             if exc.code not in (408, 425, 429, 500, 502, 503, 504):
                 raise
             retry_after = exc.headers.get("Retry-After")
-            try:
-                delay = min(60.0, max(1.0, float(retry_after))) if retry_after else min(30.0, 2 ** attempt)
-            except ValueError:
+            if not retry_after:
+                delay = min(30.0, 2 ** attempt)
+            else:
                 try:
-                    delay = min(60.0, max(1.0, (parsedate_to_datetime(retry_after) -
-                        datetime.now(timezone.utc)).total_seconds()))
-                except Exception:
-                    delay = min(30.0, 2 ** attempt)
+                    delay = min(60.0, max(1.0, float(retry_after)))
+                except (TypeError, ValueError):
+                    try:
+                        delay = min(60.0, max(1.0, (parsedate_to_datetime(retry_after) -
+                            datetime.now(timezone.utc)).total_seconds()))
+                    except Exception:
+                        delay = min(30.0, 2 ** attempt)
             sleep(delay)
         except (URLError, TimeoutError, OSError, ValueError) as exc:
             last_error = exc
