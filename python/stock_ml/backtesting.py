@@ -74,6 +74,8 @@ def calibrate_profit_threshold(predictions,*,estimated_trading_cost,
     for threshold in thresholds:
         selected=[]
         for row in calibration:
+            if not row.get('approved',False):
+                continue
             edge=abs(float(row['predicted_return']))-float(row.get('uncertainty',0.0))-cost
             if edge >= float(threshold):
                 direction=1.0 if float(row['predicted_return'])>0 else -1.0
@@ -102,6 +104,8 @@ def calibrate_profit_threshold(predictions,*,estimated_trading_cost,
     threshold=best['minimum_net_return']
     test_values=[]
     for row in holdout:
+        if not row.get('approved',False):
+            continue
         edge=abs(float(row['predicted_return']))-float(row.get('uncertainty',0.0))-cost
         if edge>=threshold:
             direction=1.0 if float(row['predicted_return'])>0 else -1.0
@@ -152,7 +156,6 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
     configured_live_threshold = 0.002 if minimum_net_return is None else float(minimum_net_return)
     if not math.isfinite(configured_live_threshold) or configured_live_threshold < 0:
         raise ValueError('minimum_net_return must be finite and non-negative')
-    required_gross_return = cost
     for origin in non_overlapping:
         end=int(np.searchsorted(times,origin,side='right'))
         train_t,train_p=times[:end],prices[:end]
