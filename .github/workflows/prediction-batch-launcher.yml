@@ -1,10 +1,23 @@
-name: Launch all Python prediction batches at 03:15 IST (one time)
+name: Launch all Python prediction batches at a chosen IST time
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '15 3 * * *'
-      timezone: 'Asia/Kolkata'
+    inputs:
+      hour:
+        description: "Hour in India time (00-23)"
+        required: true
+        type: string
+        default: "12"
+      minute:
+        description: "Minute (00-59)"
+        required: true
+        type: string
+        default: "00"
+      second:
+        description: "Second (00-59)"
+        required: true
+        type: string
+        default: "00"
 
 permissions:
   contents: read
@@ -14,18 +27,66 @@ jobs:
   launch:
     if: github.repository == 'unnyanr11/Torn-Helper-ML' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 360
     steps:
-      - name: Dispatch all six batches on the scheduled date only
+      - name: Wait until the selected time in India
+        env:
+          TARGET_HOUR: ${{ inputs.hour }}
+          TARGET_MINUTE: ${{ inputs.minute }}
+          TARGET_SECOND: ${{ inputs.second }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import sys
+          import time
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+
+          values = {
+              "hour": os.environ["TARGET_HOUR"].strip(),
+              "minute": os.environ["TARGET_MINUTE"].strip(),
+              "second": os.environ["TARGET_SECOND"].strip(),
+          }
+          limits = {"hour": 23, "minute": 59, "second": 59}
+          parsed = {}
+          for name, value in values.items():
+              if not re.fullmatch(r"\d{1,2}", value):
+                  sys.exit(f"Invalid {name}: enter a whole number.")
+              number = int(value)
+              if not 0 <= number <= limits[name]:
+                  sys.exit(f"Invalid {name}: allowed range is 0-{limits[name]}.")
+              parsed[name] = number
+
+          tz = ZoneInfo("Asia/Kolkata")
+          now = datetime.now(tz)
+          target = now.replace(
+              hour=parsed["hour"],
+              minute=parsed["minute"],
+              second=parsed["second"],
+              microsecond=0,
+          )
+          if target <= now:
+              sys.exit(
+                  f"Selected time {target:%Y-%m-%d %H:%M:%S} IST has already "
+                  "passed today. Start a new run and choose a future time."
+              )
+
+          print(f"Current time: {now:%Y-%m-%d %H:%M:%S} IST")
+          print(f"Waiting until: {target:%Y-%m-%d %H:%M:%S} IST")
+          while True:
+              remaining = (target - datetime.now(tz)).total_seconds()
+              if remaining <= 0:
+                  break
+              time.sleep(min(remaining, 1.0))
+          print(f"Target reached: {datetime.now(tz):%Y-%m-%d %H:%M:%S.%f} IST")
+          PY
+
+      - name: Dispatch all six prediction batches
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
         run: |
-          if [ "$(date -u +%Y-%m-%d)" != "2026-11-26" ]; then
-            echo "One-time launch date has passed or has not arrived; no batches dispatched."
-            exit 0
-          fi
-
           for batch in 01 02 03 04 05 06; do
             echo "Dispatching prediction batch ${batch}"
             curl --fail-with-body --silent --show-error \
