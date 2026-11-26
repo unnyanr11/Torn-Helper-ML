@@ -14,55 +14,30 @@ on:
 
 permissions:
   contents: read
-  actions: write
 
-# Each run starts an independent five-minute timer. It dispatches the next
-# run five minutes after this timer job starts, regardless of prediction duration.
-# Shard-level PostgreSQL advisory leases prevent duplicate processing.
+# Dispatch six independent prediction batches. Each batch owns a fixed set of
+# three Supabase projects (six stocks); shard advisory locks remain the final
+# guard against overlapping cycles.
 jobs:
-  retrigger:
-    if: github.repository == 'unnyanr11/Torn-Helper-ML' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 8
-    steps:
-      - name: Wait five minutes from this run's start, then dispatch the next run
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          sleep 300
-          # GitHub's dispatch endpoint can transiently return 5xx responses.
-          # Retry network/server failures rather than failing the entire timer job.
-          curl --fail-with-body --silent --show-error \
-            --retry 5 \
-            --retry-all-errors \
-            --retry-delay 5 \
-            --retry-max-time 90 \
-            --connect-timeout 15 \
-            --max-time 30 \
-            --request POST \
-            --header "Authorization: Bearer $GH_TOKEN" \
-            --header "Accept: application/vnd.github+json" \
-            --header "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/$REPOSITORY/actions/workflows/prediction.yml/dispatches" \
-            --data '{"ref":"main","inputs":{"force_train":"true"}}'
-
   predict:
     if: github.repository == 'unnyanr11/Torn-Helper-ML' && github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        batch: [1, 2, 3, 4, 5, 6]
+    name: Prediction batch ${{ matrix.batch }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 12
+    timeout-minutes: 20
     steps:
       - name: Check configuration
-        id: config
         env:
           PROJECTS: ${{ secrets.STOCK_ML_PROJECTS_JSON }}
         run: |
           if [ -z "$PROJECTS" ]; then
-            echo 'configured=false' >> "$GITHUB_OUTPUT"
             echo '::error::Add STOCK_ML_PROJECTS_JSON to repository Actions secrets.'
             exit 1
           fi
-          echo 'configured=true' >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
@@ -79,9 +54,9 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: .stock-ml-price-cache
-          key: stock-market-prices-v1-${{ github.run_id }}
+          key: stock-market-prices-v1-${{ github.run_id }}-${{ matrix.batch }}
           restore-keys: stock-market-prices-v1-
-      - name: Train when due, calibrate when due, and publish predictions
+      - name: Run assigned prediction batch
         id: cycle
         env:
           STOCK_ML_PROJECTS_JSON: ${{ secrets.STOCK_ML_PROJECTS_JSON }}
@@ -89,11 +64,25 @@ jobs:
           SHORT_ESTIMATED_TRADING_COST: ${{ vars.SHORT_ESTIMATED_TRADING_COST || '0.002' }}
           ML_FORCE_TRAIN: ${{ inputs.force_train || false }}
           ML_FORCE_CALIBRATE: ${{ inputs.force_calibrate || false }}
+          PREDICTION_BATCH: ${{ matrix.batch }}
           GITHUB_SHA: ${{ github.sha }}
-        run: python python/stock_ml/actions_runner.py
+        run: |
+          python - <<'PY'
+          import json, os, subprocess, sys
+          config = json.loads(os.environ["STOCK_ML_PROJECTS_JSON"])
+          batch = int(os.environ["PREDICTION_BATCH"])
+          allowed = set(range((batch - 1) * 3 + 1, min(batch * 3, 18) + 1))
+          selected = {str(k): v for k, v in config.items() if int(k) in allowed}
+          if not selected:
+              print(f"No configured projects assigned to prediction batch {batch}", file=sys.stderr)
+              sys.exit(1)
+          env = os.environ.copy()
+          env["STOCK_ML_PROJECTS_JSON"] = json.dumps(selected)
+          raise SystemExit(subprocess.call([sys.executable, "python/stock_ml/actions_runner.py"], env=env))
+          PY
       - name: Save public market-price cache at most hourly
         if: always() && !cancelled() && steps.cycle.outputs.cache_save == 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: .stock-ml-price-cache
-          key: stock-market-prices-v1-${{ github.run_id }}
+          key: stock-market-prices-v1-${{ github.run_id }}-${{ matrix.batch }}
