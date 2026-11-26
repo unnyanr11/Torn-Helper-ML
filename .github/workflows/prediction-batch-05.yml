@@ -1,0 +1,15 @@
+name: Stock predictions batch 05 (stocks 25-30)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  run-batch:
+    uses: ./.github/workflows/prediction-batch-reusable.yml
+    with:
+      batch_id: "05"
+      stock_ids: "25,26,27,28,29,30"
+    secrets: inherit
