@@ -6,6 +6,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import Ridge, ElasticNet
 from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor, HistGradientBoostingRegressor
 from realtime_model import exact, feature_matrix, prepare_series, validate_series, train_range, infer
+from algorithm_registry import algorithm_id_for_family
 
 MODEL_FAMILIES=('ridge','elastic_net','random_forest','extra_trees','hist_gradient_boosting','ensemble')
 BASE_FAMILIES=MODEL_FAMILIES[:-1]
@@ -360,7 +361,8 @@ def fit_live_model(times, prices, *, window_minutes, horizon_minutes, model_fami
     else:
         estimator=fit_family(model_family,x,y)
         payload=export_estimator(estimator,model_family)
-    return {"status":"ready","model_family":model_family,"inference_format":"tree-json-v1",
+    return {"status":"ready","algorithm_id":algorithm_id_for_family(model_family),
+            "model_family":model_family,"inference_format":"tree-json-v1",
             "parameters":payload,"trained_through":int(times[-1]),
             "training_rows":int(len(y))}
 
