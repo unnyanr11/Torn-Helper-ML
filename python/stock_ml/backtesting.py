@@ -140,6 +140,7 @@ def calibration_from_backtest(predictions,*,minimum_samples=30):
     return dict(active=approved,reason='holdout_improved_mae' if approved else 'holdout_not_improved',
         samples=len(raw),scale=scale if approved else 1.0,bias=bias if approved else 0.0,
         holdout_mae_raw=baseline,holdout_mae_corrected=corrected,
+        holdout_error_q90=float(np.quantile(np.abs(actual[split:]-(scale*raw[split:]+bias)),.90)) if approved else None,
         holdout_start=int(predictions[split]['origin_minute']))
 
 
