@@ -48,9 +48,21 @@ def _metrics(values):
                 rmse=float(np.sqrt(np.mean(a*a))))
 
 def _prepare_backtest_folds(times, prices, *, window_minutes, horizon_minutes,
-                            evaluation_start_minute, max_folds, min_train_rows):
-    """Build each walk-forward fold once; model families share these immutable arrays."""
+                            evaluation_start_minute, max_folds, min_train_rows,
+                            prepared=None, feature_cache=None):
+    """Build leakage-safe folds from one reusable, causal feature matrix."""
     stride = 15
+    prepared = prepared if prepared is not None else prepare_series(times, prices)
+    feature_cache = feature_cache if feature_cache is not None else {}
+    cached = feature_cache.get(window_minutes)
+    if cached is None:
+        all_origins = times[(times % stride) == 0]
+        all_features, all_valid = feature_matrix(
+            times, prices, all_origins, window_minutes, prepared
+        )
+        cached = (all_origins, all_features, all_valid)
+        feature_cache[window_minutes] = cached
+    all_origins, all_features, all_valid = cached
     candidates = times[(times % stride) == 0]
     candidates = candidates[
         candidates >= times[0] + window_minutes + horizon_minutes + min_train_rows * stride
@@ -74,15 +86,12 @@ def _prepare_backtest_folds(times, prices, *, window_minutes, horizon_minutes,
         if len(train_t) < min_train_rows:
             continue
 
-        # The expensive time-series preparation and feature extraction are
-        # independent of model family, so do them once for all six competitors.
-        prepared = prepare_series(train_t, train_p)
-        stride_origins = train_t[train_t % stride == 0]
-        features_all, feature_ok_all = feature_matrix(
-            train_t, train_p, stride_origins, window_minutes, prepared
-        )
-        # The current forecast origin is itself one of the 15-minute feature
-        # origins. Reuse that row rather than calculating its features twice.
+        # Cached features are causal: each row reads only prices at or before
+        # its origin. Restrict this fold to matured targets available at origin.
+        prefix_end = int(np.searchsorted(all_origins, origin, side='right'))
+        stride_origins = all_origins[:prefix_end]
+        features_all = all_features[:prefix_end]
+        feature_ok_all = all_valid[:prefix_end]
         origin_index = int(np.searchsorted(stride_origins, origin))
         if (origin_index >= len(stride_origins)
                 or int(stride_origins[origin_index]) != origin
@@ -90,9 +99,11 @@ def _prepare_backtest_folds(times, prices, *, window_minutes, horizon_minutes,
             continue
         x = features_all[origin_index:origin_index + 1]
 
-        targets = exact(train_t, train_p, stride_origins + horizon_minutes)
-        current_prices = exact(train_t, train_p, stride_origins)
-        matured = feature_ok_all & np.isfinite(targets) & np.isfinite(current_prices) & (current_prices > 0)
+        targets = exact(times, prices, stride_origins + horizon_minutes)
+        current_prices = exact(times, prices, stride_origins)
+        matured = (feature_ok_all & np.isfinite(targets) & np.isfinite(current_prices)
+                   & (current_prices > 0)
+                   & (stride_origins + horizon_minutes <= origin))
         origins = stride_origins[matured]
         features = features_all[matured]
         if len(origins) < 240:
@@ -219,7 +230,8 @@ def _results_from_folds(folds, *, families, window_minutes, horizon_minutes,
 
 def run_backtest_competition(times, prices, *, window_minutes: int, horizon_minutes: int,
                              style='short', max_folds=120, min_train_rows=200,
-                             model_families=MODEL_FAMILIES, evaluation_start_minute=None):
+                             model_families=MODEL_FAMILIES, evaluation_start_minute=None,
+                             prepared=None, feature_cache=None):
     """Evaluate model families on shared, precomputed walk-forward feature folds."""
     times, prices = validate_series(times, prices)
     families = tuple(model_families)
@@ -236,6 +248,7 @@ def run_backtest_competition(times, prices, *, window_minutes: int, horizon_minu
         evaluation_start_minute=evaluation_start_minute,
         max_folds=max_folds,
         min_train_rows=min_train_rows,
+        prepared=prepared, feature_cache=feature_cache,
     )
     return _results_from_folds(
         folds,
