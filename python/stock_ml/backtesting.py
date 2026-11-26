@@ -128,8 +128,8 @@ def calibration_from_backtest(predictions,*,minimum_samples=30):
     bias=float(np.clip(np.median(actual[:split]-scale*raw[:split]),-.02,.02))
     baseline=float(np.mean(np.abs(actual[split:]-raw[split:])))
     corrected=float(np.mean(np.abs(actual[split:]-(scale*raw[split:]+bias))))
-    approved=corrected<baseline
-    return dict(active=approved,reason='holdout_improved_mae' if approved else 'holdout_not_improved',
+    approved=baseline>0 and corrected<=baseline*.98
+    return dict(active=approved,reason='holdout_mae_improved_by_at_least_2pct' if approved else 'holdout_improvement_below_2pct',
         samples=len(raw),scale=scale if approved else 1.0,bias=bias if approved else 0.0,
         holdout_mae_raw=baseline,holdout_mae_corrected=corrected,
         holdout_error_q90=float(np.quantile(np.abs(actual[split:]-(scale*raw[split:]+bias)),.90)) if approved else None,
