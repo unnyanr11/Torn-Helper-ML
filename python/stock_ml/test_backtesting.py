@@ -62,12 +62,12 @@ class BacktestTests(unittest.TestCase):
         import backtesting
 
         rng=np.random.default_rng(232)
-        times=np.arange(0,12000,dtype=np.int64)
+        times=np.arange(0,20000,dtype=np.int64)
         prices=100*np.exp(np.cumsum(rng.normal(0.00001,0.0002,len(times))))
         original_fit=backtesting._fit_predict
         with patch('backtesting._fit_predict', wraps=original_fit) as fit:
             results=run_backtest_competition(
-                times,prices,window_minutes=60,horizon_minutes=15,max_folds=2,
+                times,prices,window_minutes=60,horizon_minutes=15,max_folds=3,
                 min_train_rows=200,model_families=MODEL_FAMILIES,
             )
         # Five base families × validation/final fit × two folds. The ensemble
