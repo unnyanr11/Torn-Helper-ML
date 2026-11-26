@@ -36,15 +36,15 @@ jobs:
   retrigger:
     if: github.repository == 'unnyanr11/Torn-Helper-ML' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    # Six-hour maximum on GitHub-hosted jobs; leave a dispatch buffer.
+    # Six-hour maximum on GitHub-hosted jobs; leave a one-hour dispatch buffer.
     timeout-minutes: 360
     steps:
-      - name: Wait two hours from timer start, then dispatch the next backtest
+      - name: Wait five hours from timer start, then dispatch the next backtest
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
         run: |
-          sleep 7200
+          sleep 18000
           curl --fail-with-body --silent --show-error \
             --request POST \
             --header "Authorization: Bearer $GH_TOKEN" \
