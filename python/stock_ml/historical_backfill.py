@@ -34,6 +34,12 @@ _rate_lock = threading.Lock()
 _next_request = 0.0
 
 
+def assigned_stock_ids(project):
+    if not 1 <= int(project) <= 18:
+        raise ValueError("Project number must be between 1 and 18")
+    return [int(project) * 2 - 1, int(project) * 2] if int(project) < 18 else [35]
+
+
 def rate_limit():
     global _next_request
     with _rate_lock:
@@ -140,7 +146,7 @@ def insert_chunk(conn, stock_id, rows, columns):
 
 
 def backfill_project(project, dsn, days, dry_run=False):
-    expected = [project * 2 - 1, project * 2] if project < 18 else [35]
+    expected = assigned_stock_ids(project)
     with psycopg.connect(dsn, sslmode="require", connect_timeout=15, autocommit=True) as conn:
         settings = conn.execute(
             "select project_number, enabled from stock_engine.settings where singleton"
