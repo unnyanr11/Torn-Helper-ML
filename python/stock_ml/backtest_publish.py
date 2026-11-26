@@ -114,7 +114,7 @@ def publish_stock(conn, stock_id):
         _,_,_,family,selected,improvement=winner
         predictions=selected["_predictions"]
         calibration_rows=[dict(origin_minute=int(p[0]),raw_return=float(p[1]),
-                               predicted_return=float(p[1]),actual_return=float(p[2])) for p in predictions]
+                               predicted_return=float(p[2]),actual_return=float(p[3])) for p in predictions]
         candidate=calibration_from_backtest(calibration_rows,minimum_samples=MIN_TOTAL_FOLDS)
         model=fit_live_model(times,prices,window_minutes=window,horizon_minutes=horizon,
                              model_family=family)
