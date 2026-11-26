@@ -85,7 +85,7 @@ def _signals(prices):
     roc5 = np.r_[np.full(5, np.nan), p[5:] / p[:-5] - 1.0]
     roc10 = np.r_[np.full(10, np.nan), p[10:] / p[:-10] - 1.0]
     roc20 = np.r_[np.full(20, np.nan), p[20:] / p[:-20] - 1.0]
-    returns = np.r_[np.nan, np.diff(np.log(p))]
+    returns = np.r_[0.0, np.diff(np.log(p))]
     vol14, vol50 = _rolling_std(returns, 14), _rolling_std(returns, 50)
     macd = ema12 - ema26
     macd_signal = _ema(np.nan_to_num(macd, nan=0.0), 9)
