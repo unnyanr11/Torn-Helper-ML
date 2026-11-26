@@ -24,6 +24,21 @@ class BacktestPublishTests(unittest.TestCase):
     def test_rejects_model_that_does_not_beat_no_change_by_two_percent(self):
         self.assertIsNone(choose_winner([self.row("ridge",.0099)]))
 
+    def test_requires_twenty_selection_folds_and_thirty_total_folds(self):
+        self.assertIsNone(choose_winner([{
+            **self.row("ridge",.005),
+            "selection_folds":19,"total_folds":30
+        }]))
+        self.assertIsNone(choose_winner([{
+            **self.row("ridge",.005),
+            "selection_folds":20,"total_folds":29
+        }]))
+        winner=choose_winner([{
+            **self.row("ridge",.005),
+            "selection_folds":20,"total_folds":30
+        }])
+        self.assertEqual(winner[3],"ridge")
+
     def test_rejects_unknown_model_family(self):
         self.assertIsNone(choose_winner([self.row("unregistered",.005)]))
 

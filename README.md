@@ -192,7 +192,10 @@ Backtest predictions and model-family metrics are stored in the private
 `python/stock_ml/backtest_publish.py` chooses a winner independently for every
 stock, analysis window and forecast horizon. A winner must have at least 30
 shared out-of-sample folds and improve MAE over the no-change baseline by at
-least 2%. Lowest MAE wins; directional accuracy and RMSE break ties. This is
+least 2% on the first 70% of those folds. The final 30% is held out from model
+family selection and reserved for calibration acceptance and uncertainty
+estimation. Lowest selection-period MAE wins; directional accuracy and RMSE
+break ties. This is
 strictly an accuracy comparison and does not use fees, slippage, trade counts,
 profit factor, portfolio returns or drawdown.
 

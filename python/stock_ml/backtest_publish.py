@@ -15,7 +15,8 @@ from psycopg.types.json import Jsonb
 from backtesting import MODEL_FAMILIES, calibration_from_backtest, fit_live_model
 from realtime_model import COMBINATIONS, validate_series
 
-MIN_FOLDS = 30
+MIN_TOTAL_FOLDS = 30
+MIN_SELECTION_FOLDS = 20
 MIN_MAE_IMPROVEMENT = 0.02
 LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", "180"))
 PUBLISH_WINDOW_HOURS = int(os.getenv("BACKTEST_PUBLISH_WINDOW_HOURS", "8"))
@@ -26,7 +27,8 @@ def choose_winner(rows):
     eligible=[]
     for row in rows:
         family=row["model_family"]
-        folds=int(row["folds"] or 0)
+        folds=int(row.get("selection_folds",row["folds"]) or 0)
+        total_folds=int(row.get("total_folds",folds) or 0)
         mae=float(row["mae"]) if row["mae"] is not None else None
         baseline=float(row["baseline_mae"]) if row["baseline_mae"] is not None else None
         if family not in MODEL_FAMILIES or mae is None or baseline is None or baseline<=0:
@@ -34,7 +36,7 @@ def choose_winner(rows):
         improvement=(baseline-mae)/baseline
         directional=float(row["directional_accuracy"]) if row["directional_accuracy"] is not None else 0.0
         rmse=float(row["rmse"]) if row["rmse"] is not None else float("inf")
-        if folds>=MIN_FOLDS and improvement>=MIN_MAE_IMPROVEMENT:
+        if folds>=MIN_SELECTION_FOLDS and total_folds>=MIN_TOTAL_FOLDS and improvement>=MIN_MAE_IMPROVEMENT:
             eligible.append((mae,-directional,rmse,family,row,improvement))
     if not eligible:
         return None
@@ -81,24 +83,43 @@ def publish_stock(conn, stock_id):
     published=0
     for style,window,horizon in COMBINATIONS:
         rows=by_config.get((style,window,horizon),[])
+        # Reserve the final 30% of the common walk-forward folds as a true
+        # selection/calibration holdout. Family ranking sees only the first 70%.
+        for item in rows:
+            predictions=conn.execute("""
+                select floor(extract(epoch from origin_at)/60)::bigint,
+                       raw_return,predicted_return,actual_return
+                from stock_engine.ml_backtest_predictions
+                where run_id=%s order by origin_at
+            """,(item["run_id"],)).fetchall()
+            if len(predictions)<MIN_TOTAL_FOLDS:
+                item["selection_folds"]=0
+                item["total_folds"]=len(predictions)
+                continue
+            split=int(len(predictions)*.70)
+            selection=predictions[:split]
+            actual=np.asarray([float(p[3]) for p in selection],dtype=float)
+            predicted=np.asarray([float(p[2]) for p in selection],dtype=float)
+            errors=actual-predicted
+            item["selection_folds"]=len(selection)
+            item["total_folds"]=len(predictions)
+            item["mae"]=float(np.mean(np.abs(errors)))
+            item["rmse"]=float(np.sqrt(np.mean(errors*errors)))
+            item["baseline_mae"]=float(np.mean(np.abs(actual)))
+            item["directional_accuracy"]=float(np.mean((predicted>=0)==(actual>=0)))
+            item["_predictions"]=predictions
         winner=choose_winner(rows)
         if winner is None:
             continue
         _,_,_,family,selected,improvement=winner
-        predictions=conn.execute("""
-            select floor(extract(epoch from origin_at)/60)::bigint,
-                   raw_return,actual_return
-            from stock_engine.ml_backtest_predictions
-            where run_id=%s order by origin_at
-        """,(selected["run_id"],)).fetchall()
-        if len(predictions)<MIN_FOLDS:
-            continue
+        predictions=selected["_predictions"]
         calibration_rows=[dict(origin_minute=int(p[0]),raw_return=float(p[1]),
-                               predicted_return=float(p[1]),actual_return=float(p[2])) for p in predictions]
-        candidate=calibration_from_backtest(calibration_rows,minimum_samples=MIN_FOLDS)
+                               predicted_return=float(p[2]),actual_return=float(p[3])) for p in predictions]
+        candidate=calibration_from_backtest(calibration_rows,minimum_samples=MIN_TOTAL_FOLDS)
         model=fit_live_model(times,prices,window_minutes=window,horizon_minutes=horizon,
                              model_family=family)
-        residuals=np.asarray([float(p[2])-float(p[1]) for p in predictions],dtype=float)
+        holdout_predictions=predictions[int(len(predictions)*.70):]
+        residuals=np.asarray([float(p[3])-float(p[2]) for p in holdout_predictions],dtype=float)
         error_q90=float(np.quantile(np.abs(residuals),.90))
         model_id=hashlib.sha256(json.dumps({
             "stock_id":stock_id,"style":style,"window":window,"horizon":horizon,
@@ -111,7 +132,9 @@ def publish_stock(conn, stock_id):
             metrics={"approved":True,"mae":float(selected["mae"]),
                 "baseline_mae":float(selected["baseline_mae"]),"rmse":float(selected["rmse"]),
                 "error_q90":error_q90,"directional_accuracy":float(selected["directional_accuracy"]),
-                "validation_rows":int(selected["folds"]),
+                "validation_rows":int(selected["total_folds"]),
+                "selection_rows":int(selected["selection_folds"]),
+                "holdout_rows":int(len(holdout_predictions)),
                 "mae_improvement_pct":round(improvement*100,4)})
         conn.execute("""
             insert into stock_engine.ml_v2_models
@@ -142,7 +165,8 @@ def publish_stock(conn, stock_id):
         published+=1
         print(json.dumps({"event":"best_model_published","stock_id":stock_id,
             "style":style,"analysis_minutes":window,"horizon_minutes":horizon,
-            "model_family":family,"model_id":model_id,"folds":selected["folds"],
+            "model_family":family,"model_id":model_id,"folds":selected["total_folds"],
+            "selection_folds":selected["selection_folds"],"holdout_folds":len(holdout_predictions),
             "mae_improvement_pct":round(improvement*100,3),
             "calibration_active":bool(candidate.get("active")),
             "calibration_samples":candidate.get("samples",0)}))
