@@ -124,12 +124,13 @@ def publish_stock(conn, stock_id):
         # candidate replaces stale calibration with an inactive identity record.
         calibration_payload={"scale":float(candidate.get("scale",1.0)),
             "bias":float(candidate.get("bias",0.0)),
-            "error_q90":(float(candidate["holdout_mae_corrected"]) if candidate.get("active") else None),
+            "error_q90":(float(candidate["holdout_error_q90"]) if candidate.get("active") and candidate.get("holdout_error_q90") is not None else None),
             "samples":int(candidate.get("samples",0)),"active":bool(candidate.get("active")),
             "model_id":model_id,"source":"selected_model_walk_forward_backtest",
             "source_backtest_run":str(selected["run_id"]),
             "holdout_mae_raw":candidate.get("holdout_mae_raw"),
             "holdout_mae_corrected":candidate.get("holdout_mae_corrected"),
+            "error_q90":candidate.get("holdout_error_q90"),
             "holdout_start":candidate.get("holdout_start")}
         conn.execute("""
             insert into stock_engine.ml_v2_calibration
