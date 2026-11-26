@@ -5,7 +5,7 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import Ridge, ElasticNet
 from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor, HistGradientBoostingRegressor
-from realtime_model import exact, feature_matrix, prepare_series, validate_series, train_range, make_result, MIN_EXPECTED_NET_RETURN
+from realtime_model import exact, feature_matrix, prepare_series, validate_series, train_range, make_result
 
 MODEL_FAMILIES=('ridge','elastic_net','random_forest','extra_trees','hist_gradient_boosting','ensemble')
 BASE_FAMILIES=MODEL_FAMILIES[:-1]
@@ -46,6 +46,85 @@ def _metrics(values):
     return dict(count=int(len(a)),mean=float(np.mean(a)),mae=float(np.mean(np.abs(a))),
                 rmse=float(np.sqrt(np.mean(a*a))))
 
+PROFIT_THRESHOLD_GRID=(0.0,0.001,0.002,0.003,0.005,0.0075,0.01,0.015,0.02)
+
+def calibrate_profit_threshold(predictions,*,estimated_trading_cost,
+                               thresholds=PROFIT_THRESHOLD_GRID,
+                               minimum_calibration_samples=20,
+                               minimum_calibration_trades=5,
+                               minimum_holdout_samples=6):
+    """Choose a minimum expected NET edge on an earlier chronological slice.
+
+    The final chronological slice is never used to select the threshold. It is
+    used once to report untouched holdout performance. Thresholds are minimum
+    net-edge hurdles; there is deliberately no maximum-profit ceiling.
+    """
+    rows=sorted(predictions,key=lambda p:int(p['origin_minute']))
+    split=int(len(rows)*0.70)
+    calibration,holdout=rows[:split],rows[split:]
+    base=dict(method='chronological_70_30_threshold_calibration',
+        thresholds_tested=list(thresholds),calibration_samples=len(calibration),
+        holdout_samples=len(holdout),estimated_trading_cost=float(estimated_trading_cost),
+        selected_minimum_net_return=None,active=False)
+    if len(calibration)<minimum_calibration_samples or len(holdout)<minimum_holdout_samples:
+        return dict(**base,status='insufficient_samples',
+            reason='Need more chronological out-of-sample predictions to calibrate and independently test a threshold')
+    candidates=[]
+    cost=float(estimated_trading_cost)
+    for threshold in thresholds:
+        selected=[]
+        for row in calibration:
+            edge=abs(float(row['predicted_return']))-float(row.get('uncertainty',0.0))-cost
+            if edge >= float(threshold):
+                direction=1.0 if float(row['predicted_return'])>0 else -1.0
+                if direction<0 and row.get('trade_on','signal')!='long_short':
+                    continue
+                selected.append(direction*float(row['actual_return'])-cost)
+        if len(selected)<minimum_calibration_trades:
+            continue
+        values=np.asarray(selected,dtype=float)
+        wins=values[values>0]; losses=values[values<0]
+        pf=float(wins.sum()/abs(losses.sum())) if len(losses) and abs(losses.sum())>0 else (1000.0 if len(wins) else 0.0)
+        equity=np.cumprod(1.0+values)
+        peak=np.maximum.accumulate(np.r_[1.0,equity])[1:]
+        drawdown=float(np.min(equity/peak-1.0)) if len(equity) else 0.0
+        mean=float(values.mean())
+        candidates.append(dict(minimum_net_return=float(threshold),trades=len(values),
+            mean_net_return=mean,win_rate=float(np.mean(values>0)),profit_factor=pf,
+            max_drawdown=drawdown,total_return=float(equity[-1]-1.0),
+            score=(mean/max(abs(drawdown),0.005)),eligible=bool(mean>0 and pf>1.0)))
+    eligible=[x for x in candidates if x['eligible']]
+    if not eligible:
+        return dict(**base,status='no_positive_calibration_edge',
+            reason='No tested threshold produced sufficient positive after-cost expectancy',
+            calibration_candidates=candidates)
+    best=max(eligible,key=lambda x:(x['score'],x['mean_net_return'],x['trades']))
+    threshold=best['minimum_net_return']
+    test_values=[]
+    for row in holdout:
+        edge=abs(float(row['predicted_return']))-float(row.get('uncertainty',0.0))-cost
+        if edge>=threshold:
+            direction=1.0 if float(row['predicted_return'])>0 else -1.0
+            if direction<0 and row.get('trade_on','signal')!='long_short':
+                continue
+            test_values.append(direction*float(row['actual_return'])-cost)
+    if len(test_values):
+        values=np.asarray(test_values,dtype=float)
+        wins=values[values>0]; losses=values[values<0]
+        pf=float(wins.sum()/abs(losses.sum())) if len(losses) and abs(losses.sum())>0 else (1000.0 if len(wins) else 0.0)
+        equity=np.cumprod(1.0+values)
+        peak=np.maximum.accumulate(np.r_[1.0,equity])[1:]
+        test_metrics=dict(trades=len(values),mean_net_return=float(values.mean()),
+            win_rate=float(np.mean(values>0)),profit_factor=pf,
+            max_drawdown=float(np.min(equity/peak-1.0)),total_return=float(equity[-1]-1.0))
+    else:
+        test_metrics=dict(trades=0,mean_net_return=None,win_rate=None,profit_factor=None,
+            max_drawdown=0.0,total_return=0.0)
+    return dict(**base,status='calibrated',active=True,
+        selected_minimum_net_return=threshold,calibration_metrics=best,
+        calibration_candidates=candidates,untouched_holdout=test_metrics,
+        holdout_start=int(holdout[0]['origin_minute']))
+
 def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='short',
                  fee_bps=10.0,slippage_bps=5.0,initial_capital=10000.0,
                  max_folds=120,min_train_rows=200,trade_on='signal',model_family='ridge',evaluation_start_minute=None,
@@ -68,10 +147,12 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
             non_overlapping.append(int(candidate)); last_exit=int(candidate)+horizon_minutes
     predictions=[]; trades=[]; equity=float(initial_capital); peak=equity; max_dd=0.0
     cost=(fee_bps + 2.0*slippage_bps)/10000.0
-    minimum_net = MIN_EXPECTED_NET_RETURN if minimum_net_return is None else float(minimum_net_return)
-    if not math.isfinite(minimum_net) or minimum_net < 0:
+    # minimum_net_return is retained for API compatibility only. Research calibrates
+    # its operating threshold from chronological predictions instead of imposing it.
+    configured_live_threshold = 0.002 if minimum_net_return is None else float(minimum_net_return)
+    if not math.isfinite(configured_live_threshold) or configured_live_threshold < 0:
         raise ValueError('minimum_net_return must be finite and non-negative')
-    required_gross_return = cost + minimum_net
+    required_gross_return = cost
     for origin in non_overlapping:
         end=int(np.searchsorted(times,origin,side='right'))
         train_t,train_p=times[:end],prices[:end]
@@ -82,11 +163,12 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
         if model_family=='ridge':
             fitted=train_range(train_t,train_p,style,window_minutes,[horizon_minutes],prepared).get(horizon_minutes,{})
             if fitted.get('status')!='ready': continue
-            result=make_result(fitted,None,x[0],True,minimum_net_return=minimum_net,estimated_trading_cost=cost)
+            result=make_result(fitted,None,x[0],True,minimum_net_return=0.0,estimated_trading_cost=cost)
             validation_mae=float(fitted['metrics']['mae'])
             baseline=float(fitted['metrics']['baseline_mae'])
             approved=bool(fitted['metrics']['approved'])
             final_prediction=float(result.get('predicted_return',0.0))
+            uncertainty=float(result.get('error_q90',validation_mae) or validation_mae)
         else:
             stride_origins=train_t[(train_t%stride)==0]
             features,feature_ok=feature_matrix(train_t,train_p,stride_origins,window_minutes,prepared)
@@ -105,28 +187,41 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
             baseline=float(np.mean(np.abs(val_y)))
             approved=bool(baseline>0 and validation_mae<baseline*.98)
             final_prediction=float(_family_predict(model_family,features,y,x)[0])
+            uncertainty=validation_mae
         future=float(exact(times,prices,[origin+horizon_minutes])[0])
         current=float(exact(times,prices,[origin])[0])
         if not math.isfinite(future) or not math.isfinite(current): continue
         actual=future/current-1.0
-        signal = (result.get('signal', 'Wait') if model_family == 'ridge' else
-                  ('Buy' if approved and final_prediction > required_gross_return else
-                   'Sell' if approved and final_prediction < -required_gross_return else 'Wait'))
+        # Record direction/confidence without a preset profit hurdle. The threshold
+        # calibration below decides which predictions qualify for trading.
+        signal=('Buy' if approved and final_prediction>uncertainty else
+                'Sell' if approved and final_prediction < -uncertainty else 'Wait')
         predictions.append(dict(origin_minute=origin,target_minute=origin+horizon_minutes,
             origin_price=current,actual_price=future,predicted_return=final_prediction,
             raw_return=final_prediction,actual_return=actual,
             predicted_price=current*(1.0+final_prediction),signal=signal,
             model_id=model_family,model_family=model_family,validation_mae=validation_mae,
-            validation_baseline_mae=baseline,approved=approved))
-        side=1.0 if signal=='Buy' else 0.0
-        if trade_on=='long_short' and signal=='Sell': side=-1.0
-        if side:
-            gross=side*actual; net=gross-cost; before=equity
-            equity*=max(0.0,1.0+net); peak=max(peak,equity)
-            max_dd=min(max_dd,equity/peak-1.0)
-            trades.append(dict(origin_minute=origin,exit_minute=origin+horizon_minutes,
-                side='long' if side>0 else 'short',entry_price=current,exit_price=future,
-                gross_return=gross,net_return=net,capital_before=before,capital_after=equity))
+            validation_baseline_mae=baseline,uncertainty=uncertainty,approved=approved,
+            trade_on=trade_on))
+    threshold_calibration=calibrate_profit_threshold(predictions,estimated_trading_cost=cost)
+    selected_threshold=threshold_calibration.get('selected_minimum_net_return')
+    if threshold_calibration.get('active'):
+        holdout_start=int(threshold_calibration['holdout_start'])
+        holdout=[p for p in predictions if int(p['origin_minute'])>=holdout_start]
+        equity=float(initial_capital); peak=equity; max_dd=0.0
+        for row in holdout:
+            edge=abs(float(row['predicted_return']))-float(row['uncertainty'])-cost
+            if edge < selected_threshold: continue
+            side=1.0 if row['predicted_return']>0 else (-1.0 if trade_on=='long_short' else 0.0)
+            if not side: continue
+            net=side*float(row['actual_return'])-cost; before=equity
+            equity*=max(0.0,1.0+net); peak=max(peak,equity); max_dd=min(max_dd,equity/peak-1.0)
+            trades.append(dict(origin_minute=row['origin_minute'],exit_minute=row['target_minute'],
+                side='long' if side>0 else 'short',entry_price=row['origin_price'],
+                exit_price=row['actual_price'],gross_return=side*row['actual_return'],
+                net_return=net,capital_before=before,capital_after=equity))
+    else:
+        equity=float(initial_capital); max_dd=0.0
     actuals=[p['actual_return'] for p in predictions]
     errors=[p['actual_return']-p['predicted_return'] for p in predictions]
     trade_returns=[t['net_return'] for t in trades]
@@ -138,7 +233,8 @@ def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='sh
         config=dict(style=style,window_minutes=window_minutes,horizon_minutes=horizon_minutes,
             model_family=model_family,evaluation_start_minute=(int(evaluation_start_minute) if evaluation_start_minute is not None else None),
             fee_bps=fee_bps,slippage_bps=slippage_bps,
-            minimum_net_return=minimum_net,required_gross_return=required_gross_return,
+            configured_live_minimum_net_return=configured_live_threshold,
+            threshold_calibration=threshold_calibration,
             initial_capital=initial_capital,execution='decision-close to exact-horizon close',trade_on=trade_on),
         metrics=dict(folds=len(predictions),trades=len(trades),total_return=equity/initial_capital-1.0,
             final_capital=equity,win_rate=wins/len(trades) if trades else None,wins=wins,losses=losses,
