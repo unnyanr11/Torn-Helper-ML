@@ -76,19 +76,24 @@ def _prepare_backtest_folds(times, prices, *, window_minutes, horizon_minutes,
         # The expensive time-series preparation and feature extraction are
         # independent of model family, so do them once for all six competitors.
         prepared = prepare_series(train_t, train_p)
-        x, valid = feature_matrix(train_t, train_p, [origin], window_minutes, prepared)
-        if not bool(valid[0]):
-            continue
-
         stride_origins = train_t[train_t % stride == 0]
-        features, feature_ok = feature_matrix(
+        features_all, feature_ok_all = feature_matrix(
             train_t, train_p, stride_origins, window_minutes, prepared
         )
+        # The current forecast origin is itself one of the 15-minute feature
+        # origins. Reuse that row rather than calculating its features twice.
+        origin_index = int(np.searchsorted(stride_origins, origin))
+        if (origin_index >= len(stride_origins)
+                or int(stride_origins[origin_index]) != origin
+                or not bool(feature_ok_all[origin_index])):
+            continue
+        x = features_all[origin_index:origin_index + 1]
+
         targets = exact(train_t, train_p, stride_origins + horizon_minutes)
         current_prices = exact(train_t, train_p, stride_origins)
-        matured = feature_ok & np.isfinite(targets) & np.isfinite(current_prices) & (current_prices > 0)
+        matured = feature_ok_all & np.isfinite(targets) & np.isfinite(current_prices) & (current_prices > 0)
         origins = stride_origins[matured]
-        features = features[matured]
+        features = features_all[matured]
         if len(origins) < 240:
             continue
 
