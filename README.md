@@ -113,9 +113,9 @@ is isolated in `stock_engine`; this repository does not change RLS policies.
 
 ## Trading thresholds and costs
 
-The short-term live signal and backtest default minimum expected net return is **0.1%** after estimated trading costs. The default live round-trip cost estimate is 0.20%: the game's 0.10% fee is charged once when selling, plus the model's assumed 0.05% slippage on each side. The backtest deducts the fee once and slippage on both entry and exit. There is no maximum expected-profit threshold. Configure the worker/backtest defaults with GitHub Actions repository Variables:
+The short-term live signal and backtest default minimum expected net return is **0.2%** after estimated trading costs. The default live round-trip cost estimate is 0.20%: the game's 0.10% fee is charged once when selling, plus the model's assumed 0.05% slippage on each side. The backtest deducts the fee once and slippage on both entry and exit. There is no maximum expected-profit threshold. Configure the worker/backtest defaults with GitHub Actions repository Variables:
 
-- `SHORT_MIN_EXPECTED_NET_RETURN` (fraction; default `0.001` = 0.1%)
+- `SHORT_MIN_EXPECTED_NET_RETURN` (fraction; default `0.002` = 0.2%)
 - `SHORT_ESTIMATED_TRADING_COST` (fraction; default `0.002` = 0.20% round-trip)
 
 The backtest's fee/slippage inputs remain separate and are deducted from realized returns; its signal hurdle is round-trip cost plus the minimum net return. The main app's per-user saved preference remains an app-level setting; these worker variables configure the shared model-worker default, not an individual user's preference.
@@ -214,3 +214,26 @@ python -m unittest discover -s python/stock_ml -v
 
 No credentials, private holdings, account data or personal information belong
 in this public repository.
+
+
+## Technical strategy competition
+
+The manual backtest also evaluates nine close-only strategy families for each
+stock and each of the six short-term horizons: EMA trend, MACD trend, ROC
+momentum, dual momentum, Bollinger mean reversion, RSI mean reversion,
+Donchian breakout, volatility breakout and Bollinger squeeze breakout.
+Signals are calculated from information available at the decision close and
+executed at the next observed close. Missing target bars and large gaps in an
+execution path are skipped rather than filled.
+
+Each strategy is tested independently with a close-only volatility stop,
+2R target, 0.5% equity risk budget and 15% notional cap. The report includes
+trade count, win rate, mean net trade return, compounded return, profit factor,
+drawdown and exposure, alongside buy-and-hold and cash benchmarks. Eligibility
+requires at least five trades, mean net return of at least 0.2%, positive
+compounded return, profit factor above 1 and drawdown within 15%. These are
+research gates, not guarantees. Technical strategies remain research-only;
+they are not promoted to live signals or orders without separate out-of-sample
+and matured live-forward evidence. The short-term default minimum expected
+net return is 0.2% and remains configurable through
+`SHORT_MIN_EXPECTED_NET_RETURN`; there is no fixed maximum.
