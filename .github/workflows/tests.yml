@@ -6,11 +6,15 @@ on:
     paths:
       - 'python/stock_ml/**'
       - '.github/workflows/tests.yml'
+      - '.github/workflows/backtest.yml'
+      - '.github/workflows/prediction.yml'
   pull_request:
     branches: [main]
     paths:
       - 'python/stock_ml/**'
       - '.github/workflows/tests.yml'
+      - '.github/workflows/backtest.yml'
+      - '.github/workflows/prediction.yml'
 
 permissions:
   contents: read
