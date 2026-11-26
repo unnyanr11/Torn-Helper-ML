@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from backtesting import run_backtest, calibration_from_backtest, MODEL_FAMILIES, _family_predict
+from backtesting import run_backtest, run_backtest_competition, calibration_from_backtest, MODEL_FAMILIES, _family_predict
 from realtime_model import train_range, RIDGE_ALPHAS, COMBINATIONS, feature_matrix, infer_exported
 from backtest_runner import _align_model_results
 from backtesting import fit_live_model
@@ -21,6 +21,41 @@ class BacktestTests(unittest.TestCase):
         self.assertEqual(len(COMBINATIONS),72)
         self.assertEqual(len(set(COMBINATIONS)),72)
         self.assertEqual({style for style, _, _ in COMBINATIONS}, {'short'})
+
+    def test_competition_reuses_feature_preparation_and_matches_single_family_results(self):
+        from unittest.mock import patch
+        import backtesting
+
+        rng=np.random.default_rng(231)
+        times=np.arange(0,12000,dtype=np.int64)
+        prices=100*np.exp(np.cumsum(rng.normal(0.00001,0.0002,len(times))))
+        with patch('backtesting.prepare_series', wraps=backtesting.prepare_series) as prepare:
+            grouped=run_backtest_competition(
+                times,prices,window_minutes=60,horizon_minutes=15,max_folds=2,
+                min_train_rows=200,model_families=('ridge','elastic_net'),
+            )
+            # Feature preparation occurs once per eligible fold, not once per family.
+            self.assertEqual(prepare.call_count,2)
+
+        for family in ('ridge','elastic_net'):
+            individual=run_backtest(
+                times,prices,window_minutes=60,horizon_minutes=15,max_folds=2,
+                min_train_rows=200,model_family=family,
+            )
+            self.assertEqual(
+                [p['origin_minute'] for p in grouped[family]['predictions']],
+                [p['origin_minute'] for p in individual['predictions']],
+            )
+            np.testing.assert_allclose(
+                [p['predicted_return'] for p in grouped[family]['predictions']],
+                [p['predicted_return'] for p in individual['predictions']],
+                rtol=0,atol=1e-12,
+            )
+            np.testing.assert_allclose(
+                [p['actual_return'] for p in grouped[family]['predictions']],
+                [p['actual_return'] for p in individual['predictions']],
+                rtol=0,atol=1e-12,
+            )
 
     def test_backtest_rejects_long_term_style(self):
         with self.assertRaisesRegex(ValueError, 'Invalid model style'):
