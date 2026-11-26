@@ -48,7 +48,7 @@ def is_due(previous, seconds, now=None):
     return previous is None or ((now or datetime.now(timezone.utc))-previous).total_seconds()>=seconds
 
 
-def process(project,dsn,force_train=False,force_calibrate=False):
+def process(project,dsn,force_train=False,force_calibrate=False,stock_filter=None):
     with project_connection(connect,dsn) as conn:
         if not conn.execute('select pg_try_advisory_lock(%s,%s)',(74183000,project)).fetchone()[0]:
             # Scheduled cycles may overlap. Another run already owns this shard,
@@ -69,7 +69,7 @@ def process(project,dsn,force_train=False,force_calibrate=False):
         calibrate_due=force_calibrate or is_due(state[1],10800)
         models=load_payloads(conn,'models')
         corrections=load_payloads(conn,'calibration')
-        stocks=[r[0] for r in conn.execute('select stock_id from stock_engine.stocks order by stock_id').fetchall()]
+        stocks=[r[0] for r in conn.execute('select stock_id from stock_engine.stocks order by stock_id').fetchall()]\n        if stock_filter is not None:\n            stocks=[stock for stock in stocks if stock in stock_filter]
         if not stocks or any(s not in (project*2-1,project*2) or s>35 for s in stocks):
             raise ValueError('Invalid stock assignment')
         # Turn off the legacy SQL baseline in this stock project.
@@ -181,11 +181,31 @@ def main():
             raise ValueError()
     except (ValueError,TypeError):
         parser.error('Set STOCK_ML_PROJECTS_JSON to a mapping of project numbers to PostgreSQL URLs')
+    # Optional allowlist lets GitHub Actions run disjoint project shards in
+    # independent batches. Missing STOCK_IDS preserves the legacy all-shards mode.
+    raw_stock_ids = os.environ.get('STOCK_IDS', '').strip()
+    if raw_stock_ids:
+        try:
+            selected_stocks = {int(value.strip()) for value in raw_stock_ids.split(',') if value.strip()}
+            if not selected_stocks or any(stock < 1 or stock > 35 for stock in selected_stocks):
+                raise ValueError()
+        except ValueError:
+            parser.error('STOCK_IDS must be a comma-separated list of stock IDs from 1 to 35')
+        selected_projects = {(stock + 1) // 2 for stock in selected_stocks}
+        missing_projects = selected_projects.difference(int(number) for number in config)
+        if missing_projects:
+            parser.error('STOCK_ML_PROJECTS_JSON is missing required project(s): ' +
+                         ', '.join(map(str, sorted(missing_projects))))
+        config = {
+            number: dsn for number, dsn in config.items()
+            if int(number) in selected_projects
+        }
     failed=False
     def execute(entry):
         number,dsn=entry
         try:
-            process(int(number),dsn,args.force_train,args.force_calibrate)
+            process(int(number),dsn,args.force_train,args.force_calibrate,
+                    selected_stocks if raw_stock_ids else None)
             return True
         except Exception as exc:
             # Do not log raw exception text: connection errors can contain passwords.
@@ -193,7 +213,7 @@ def main():
             details=safe_error(original,'connect' if isinstance(exc,ConnectionStageError) else 'database_work')
             print(json.dumps(dict(event='project_failed',project=int(number),error=type(original).__name__,**details)),flush=True)
             return False
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=min(4, max(1, len(config)))) as executor:
         failed=not all(list(executor.map(execute,config.items())))
     cache_output()
     return int(failed)
