@@ -1,5 +1,6 @@
 import json, os, time
 from collections import Counter
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
 import psycopg
 from algorithm_registry import ALGORITHM_REGISTRY, family_for_algorithm_id
@@ -74,21 +75,37 @@ def main():
     if not 30 <= lookback <= 180 or not 240 <= max_rows <= 10000:
         raise SystemExit("Invalid benchmark lookback or training row cap")
     projects = {int(k): v for k, v in json.loads(os.environ["STOCK_ML_PROJECTS_JSON"]).items()}
+    workers = int(os.getenv("BENCHMARK_WORKERS", "2"))
+    if not 1 <= workers <= 6:
+        raise SystemExit("BENCHMARK_WORKERS must be between 1 and 6")
     results, failures = [], []
     started = time.perf_counter()
-    for stock in range(1, 7):
-        project = (stock + 1) // 2
-        try:
-            result = run_stock(project, projects[project], stock, lookback, max_rows)
-            results.append(result)
-            print(json.dumps({"event": "stock_benchmark", **result}), flush=True)
-        except Exception as exc:
-            failure = {"stock_id": stock, "error": f"{type(exc).__name__}: {exc}"}
-            failures.append(failure)
-            print(json.dumps({"event": "stock_benchmark_failed", **failure}), flush=True)
+    print(json.dumps({"event": "benchmark_started", "workers": workers,
+                      "stocks": 6, "selectors_per_stock": len(COMBINATIONS)}), flush=True)
+    # Each process owns its DB connection and stock arrays/models. Collect
+    # results as stocks finish; estimator-level native threads remain capped at 1.
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(run_stock, (stock + 1) // 2, projects[(stock + 1) // 2],
+                        stock, lookback, max_rows): stock
+            for stock in range(1, 7)
+        }
+        for future in as_completed(futures):
+            stock = futures[future]
+            try:
+                result = future.result()
+                results.append(result)
+                print(json.dumps({"event": "stock_benchmark", **result}), flush=True)
+            except Exception as exc:
+                failure = {"stock_id": stock, "error": f"{type(exc).__name__}: {exc}"}
+                failures.append(failure)
+                print(json.dumps({"event": "stock_benchmark_failed", **failure}), flush=True)
+    results.sort(key=lambda row: row["stock_id"])
+    failures.sort(key=lambda row: row["stock_id"])
     elapsed = time.perf_counter()-started
     summary = {
         "lookback_days": lookback, "max_training_rows_per_selector": max_rows,
+        "worker_processes": workers,
         "algorithm_assignments": {str(k): {"algorithm_id": k, "family": ALGORITHM_REGISTRY[k]} for k in ASSIGNMENTS.values()},
         "stocks_completed": len(results), "failures": failures,
         "selectors_predicted": sum(r["selectors_predicted"] for r in results),
@@ -104,7 +121,7 @@ def main():
             out.write("| Stock | Algorithm | Predictions | Skipped | Fit seconds | Inference seconds | Total seconds |\n|---:|---|---:|---:|---:|---:|---:|\n")
             for r in results:
                 out.write(f"| {r['stock_id']} | {r['algorithm_id']} — {r['model_family']} | {r['selectors_predicted']}/{r['selectors_total']} | {r['selectors_skipped']} | {r['fit_seconds']:.3f} | {r['inference_seconds']:.3f} | {r['stock_total_seconds']:.3f} |\n")
-            out.write(f"\n**Total wall-clock:** {elapsed:.3f} seconds\n\n**Completed stocks:** {len(results)}/6\n")
+            out.write(f"\n**Worker processes:** {workers}\n\n**Total wall-clock:** {elapsed:.3f} seconds\n\n**Completed stocks:** {len(results)}/6\n")
             if failures:
                 out.write("\n## Failures\n")
                 for f in failures:

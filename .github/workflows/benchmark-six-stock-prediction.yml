@@ -13,6 +13,11 @@ on:
         required: true
         default: "3000"
         type: string
+      workers:
+        description: Parallel stock worker processes (1-6; start with 2)
+        required: true
+        default: "2"
+        type: string
 
 permissions:
   contents: read
@@ -33,12 +38,14 @@ jobs:
           PROJECTS: ${{ secrets.STOCK_ML_PROJECTS_JSON }}
           LOOKBACK_DAYS: ${{ inputs.lookback_days }}
           MAX_TRAINING_ROWS: ${{ inputs.max_training_rows }}
+          WORKERS: ${{ inputs.workers }}
         run: |
           test -n "$PROJECTS" || { echo "::error::Missing STOCK_ML_PROJECTS_JSON"; exit 1; }
           python - <<'PY'
           import os
           lookback, rows = int(os.environ["LOOKBACK_DAYS"]), int(os.environ["MAX_TRAINING_ROWS"])
-          if not 30 <= lookback <= 180 or not 240 <= rows <= 10000:
+          workers = int(os.environ["WORKERS"])
+          if not 30 <= lookback <= 180 or not 240 <= rows <= 10000 or not 1 <= workers <= 6:
               raise SystemExit("Invalid benchmark inputs")
           PY
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -60,6 +67,7 @@ jobs:
           STOCK_ML_PROJECTS_JSON: ${{ secrets.STOCK_ML_PROJECTS_JSON }}
           BENCHMARK_LOOKBACK_DAYS: ${{ inputs.lookback_days }}
           BENCHMARK_MAX_TRAINING_ROWS: ${{ inputs.max_training_rows }}
+          BENCHMARK_WORKERS: ${{ inputs.workers }}
           OMP_NUM_THREADS: "1"
           OPENBLAS_NUM_THREADS: "1"
           MKL_NUM_THREADS: "1"
