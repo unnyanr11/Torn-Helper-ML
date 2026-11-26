@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import numpy as np
+from market_intelligence import (classify_market_regime, adaptive_exit_plan, select_strategy_for_regime)
 
 STRATEGY_FAMILIES = (
     "trend_ema", "trend_macd", "momentum_roc", "momentum_dual",
@@ -159,6 +160,7 @@ def run_strategy_competition(times, prices, *, horizon_steps, bar_seconds,
         raise ValueError("round_trip_cost must be finite and between 0 and 1")
 
     buy, sell, volatility = _signals(p)
+    current_regime = classify_market_regime(p)
     start = int(np.searchsorted(t, evaluation_start)) if evaluation_start is not None else 0
     results = {}
     for name in STRATEGY_FAMILIES:
@@ -181,15 +183,26 @@ def run_strategy_competition(times, prices, *, horizon_steps, bar_seconds,
                 i += 1
                 continue
             entry = float(p[entry_i])
-            vol = float(volatility[i]) if np.isfinite(volatility[i]) else 0.0
-            stop_pct = max(1.5 * vol, 0.003)
-            target_pct = 2.0 * stop_pct
-            stop_price, target_price = entry * (1.0 - stop_pct), entry * (1.0 + target_pct)
-            position_weight = min(max_position_weight, risk_budget / stop_pct)
+            regime = classify_market_regime(p[:i + 1]).get("regime", "unknown")
+            if regime == "unknown":
+                regime = "sideways"
+            trailing = p[max(0, i - 39):i + 1]
+            exit_plan = adaptive_exit_plan(entry, trailing, regime,
+                risk_budget=risk_budget, max_position_weight=max_position_weight)
+            stop_pct = float(exit_plan["stop_pct"])
+            target_pct = float(exit_plan["target_pct"])
+            stop_price = float(exit_plan["stop_price"])
+            target_price = float(exit_plan["target_price"])
+            position_weight = float(exit_plan["position_weight"])
+            trailing_stop = stop_price
+            peak_since_entry = entry
             exit_i, reason = target_i, "time"
             for j in range(entry_i + 1, target_i + 1):
-                if p[j] <= stop_price:
-                    exit_i, reason = j, "stop"
+                peak_since_entry = max(peak_since_entry, float(p[j]))
+                trailing_stop = max(trailing_stop, peak_since_entry *
+                    (1.0 - max(0.003, 1.25 * float(exit_plan["volatility"]))))
+                if p[j] <= trailing_stop:
+                    exit_i, reason = j, "trailing_stop" if trailing_stop > stop_price else "stop"
                     break
                 if p[j] >= target_price:
                     exit_i, reason = j, "target"
@@ -210,7 +223,9 @@ def run_strategy_competition(times, prices, *, horizon_steps, bar_seconds,
                 origin_time=int(t[i]), entry_time=int(t[entry_i]), exit_time=int(t[exit_i]),
                 entry_price=entry, exit_price=exit_price, gross_return=gross,
                 net_return=net, position_weight=position_weight,
-                capital_before=before, capital_after=equity, exit_reason=reason))
+                capital_before=before, capital_after=equity, exit_reason=reason,
+                market_regime=regime, initial_stop_price=stop_price,
+                target_price=target_price, trailing_stop_price=trailing_stop))
             i = exit_i
         net_returns = np.asarray([x["net_return"] for x in trades], dtype=float)
         wins = int(np.sum(net_returns > 0))
@@ -245,14 +260,18 @@ def run_strategy_competition(times, prices, *, horizon_steps, bar_seconds,
         max_drawdown=None, eligible=False), trades=[])
     results["baseline_cash"] = dict(status="benchmark", metrics=dict(
         trades=0, total_return=0.0, max_drawdown=0.0, eligible=False), trades=[])
+    best_strategy = next((name for name, item in sorted(results.items(),
+        key=lambda pair: (-(pair[1]["metrics"].get("total_return") or 0.0),
+                          -(pair[1]["metrics"].get("profit_factor") or 0.0)))
+        if item["metrics"].get("eligible")), None)
+    regime = current_regime.get("regime", "unknown")
+    regime_strategy = select_strategy_for_regime(results, regime)
     return dict(status="completed", config=dict(horizon_steps=horizon_steps,
         bar_seconds=bar_seconds, fee_bps=fee_bps, slippage_bps=slippage_bps,
         round_trip_cost=cost, minimum_net_return=minimum_net_return,
         max_position_weight=max_position_weight, risk_budget=risk_budget,
         max_drawdown=max_drawdown, execution="next_observed_close",
-        stops="close_only_atr_proxy", long_only=True),
-        strategies=results,
-        best_strategy=next((name for name, item in sorted(results.items(),
-            key=lambda pair: (-(pair[1]["metrics"].get("total_return") or 0.0),
-                              -(pair[1]["metrics"].get("profit_factor") or 0.0)))
-            if item["metrics"].get("eligible")), None))
+        stops="causal_volatility_stop_plus_close_trailing_stop", long_only=True,
+        current_market_regime=current_regime),
+        strategies=results, best_strategy=best_strategy,
+        best_strategy_for_current_regime=regime_strategy)
