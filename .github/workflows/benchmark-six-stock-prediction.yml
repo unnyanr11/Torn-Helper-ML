@@ -28,8 +28,16 @@ concurrency:
 
 jobs:
   benchmark:
-    name: Benchmark six stocks with six different algorithms
+    name: Benchmark all six stocks with ${{ matrix.model }}
     if: github.repository == 'unnyanr11/Torn-Helper-ML'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - algorithm_id: 3
+            model: Random Forest
+          - algorithm_id: 6
+            model: Ensemble
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
@@ -62,12 +70,13 @@ jobs:
         run: python -m py_compile python/stock_ml/benchmark_prediction.py
       - name: Run stock prediction unit tests
         run: python -m unittest discover -s python/stock_ml -v
-      - name: Benchmark all 72 selectors per stock
+      - name: Benchmark 36 selectors per stock using ${{ matrix.model }}
         env:
           STOCK_ML_PROJECTS_JSON: ${{ secrets.STOCK_ML_PROJECTS_JSON }}
           BENCHMARK_LOOKBACK_DAYS: ${{ inputs.lookback_days }}
           BENCHMARK_MAX_TRAINING_ROWS: ${{ inputs.max_training_rows }}
           BENCHMARK_WORKERS: ${{ inputs.workers }}
+          BENCHMARK_ALGORITHM_ID: ${{ matrix.algorithm_id }}
           OMP_NUM_THREADS: "1"
           OPENBLAS_NUM_THREADS: "1"
           MKL_NUM_THREADS: "1"
