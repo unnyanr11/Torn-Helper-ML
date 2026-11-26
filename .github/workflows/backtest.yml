@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/backtest.yml'
+      - 'python/stock_ml/backtesting.py'
+      - 'python/stock_ml/backtest_runner.py'
   workflow_dispatch:
     inputs:
       lookback_days:
