@@ -141,3 +141,89 @@ def calibration_from_backtest(predictions,*,minimum_samples=30):
         samples=len(raw),scale=scale if approved else 1.0,bias=bias if approved else 0.0,
         holdout_mae_raw=baseline,holdout_mae_corrected=corrected,
         holdout_start=int(predictions[split]['origin_minute']))
+
+
+def _export_tree(estimator):
+    tree=estimator.tree_
+    return {
+        "left":tree.children_left.astype(int).tolist(),
+        "right":tree.children_right.astype(int).tolist(),
+        "feature":tree.feature.astype(int).tolist(),
+        "threshold":tree.threshold.astype(float).tolist(),
+        "value":tree.value[:,0,0].astype(float).tolist(),
+    }
+
+
+def export_estimator(estimator, family):
+    """Export a fitted sklearn estimator to a compact, browser-safe JSON payload."""
+    if family in ("ridge","elastic_net"):
+        scaler=estimator.named_steps["standardscaler"]
+        model=estimator.named_steps[list(estimator.named_steps)[-1]]
+        return {"kind":"linear","mean":scaler.mean_.astype(float).tolist(),
+                "scale":scaler.scale_.astype(float).tolist(),
+                "coef":model.coef_.astype(float).tolist(),"intercept":float(model.intercept_)}
+    if family in ("random_forest","extra_trees"):
+        return {"kind":"forest","trees":[_export_tree(t) for t in estimator.estimators_],
+                "aggregation":"mean"}
+    if family=="hist_gradient_boosting":
+        predictors=[]
+        for iteration in estimator._predictors:
+            predictor=iteration[0]
+            nodes=predictor.nodes
+            predictors.append({
+                "left":nodes["left"].astype(int).tolist(),
+                "right":nodes["right"].astype(int).tolist(),
+                "feature":nodes["feature_idx"].astype(int).tolist(),
+                "threshold":nodes["num_threshold"].astype(float).tolist(),
+                "value":nodes["value"].astype(float).tolist(),
+                "is_leaf":nodes["is_leaf"].astype(bool).tolist(),
+            })
+        return {"kind":"hist_gradient_boosting","baseline":float(estimator._baseline_prediction[0,0]),
+                "learning_rate":float(estimator.learning_rate),"trees":predictors}
+    raise ValueError("Unsupported exported model family: "+str(family))
+
+
+def fit_live_model(times, prices, *, window_minutes, horizon_minutes, model_family):
+    """Fit the selected backtest winner on all matured, genuine observations."""
+    from sklearn.linear_model import Ridge, ElasticNet
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.pipeline import make_pipeline
+    from sklearn.ensemble import (RandomForestRegressor, ExtraTreesRegressor,
+                                  HistGradientBoostingRegressor)
+    times,prices=validate_series(times,prices)
+    prepared=prepare_series(times,prices)
+    origins=times[times%15==0]
+    features,valid=feature_matrix(times,prices,origins,window_minutes,prepared)
+    targets=exact(times,prices,origins+horizon_minutes)
+    current=exact(times,prices,origins)
+    valid &= np.isfinite(targets) & np.isfinite(current) & (current>0)
+    x=features[valid]; y=targets[valid]/current[valid]-1.0
+    if len(y)<240:
+        raise ValueError("Insufficient matured observations to fit the selected model")
+    def fit_family(family, design, target):
+        if family=="ridge":
+            estimator=make_pipeline(StandardScaler(),Ridge(alpha=100.0))
+        elif family=="elastic_net":
+            estimator=make_pipeline(StandardScaler(),ElasticNet(alpha=.0001,l1_ratio=.25,max_iter=3000))
+        elif family=="random_forest":
+            estimator=RandomForestRegressor(n_estimators=60,max_depth=6,min_samples_leaf=8,max_features=.8,n_jobs=1,random_state=17)
+        elif family=="extra_trees":
+            estimator=ExtraTreesRegressor(n_estimators=60,max_depth=6,min_samples_leaf=8,max_features=.8,n_jobs=1,random_state=17)
+        elif family=="hist_gradient_boosting":
+            estimator=HistGradientBoostingRegressor(max_iter=80,max_leaf_nodes=7,l2_regularization=2.0,learning_rate=.05,random_state=17)
+        else:
+            raise ValueError("Unknown model family: "+str(family))
+        estimator.fit(design,target)
+        return estimator
+    if model_family=="ensemble":
+        members={name:fit_family(name,x,y) for name in BASE_FAMILIES}
+        exported={name:export_estimator(est,name) for name,est in members.items()}
+        payload={"kind":"ensemble","members":exported,"aggregation":"median"}
+    else:
+        estimator=fit_family(model_family,x,y)
+        payload=export_estimator(estimator,model_family)
+    return {"status":"ready","model_family":model_family,"inference_format":"tree-json-v1",
+            "parameters":payload,"trained_through":int(times[-1]),
+            "training_rows":int(len(y))}
+
+
