@@ -16,7 +16,7 @@ RIDGE_ALPHAS = (1.0, 10.0, 100.0, 1000.0)
 # Short-term defaults: 0.1% minimum NET return after configured costs.
 # Environment overrides configure worker/backtest defaults; no profit ceiling exists.
 ESTIMATED_TRADING_COST = float(os.getenv('SHORT_ESTIMATED_TRADING_COST', '0.002'))
-MIN_EXPECTED_NET_RETURN = float(os.getenv('SHORT_MIN_EXPECTED_NET_RETURN', '0.001'))
+MIN_EXPECTED_NET_RETURN = float(os.getenv('SHORT_MIN_EXPECTED_NET_RETURN', '0.002'))
 MIN_PREDICTED_GROSS_RETURN = ESTIMATED_TRADING_COST + MIN_EXPECTED_NET_RETURN
 
 if (not math.isfinite(ESTIMATED_TRADING_COST) or not math.isfinite(MIN_EXPECTED_NET_RETURN)
