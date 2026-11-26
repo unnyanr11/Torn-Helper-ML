@@ -3,7 +3,7 @@ import json, os, sys, uuid, traceback, multiprocessing
 import psycopg
 import numpy as np
 from psycopg.types.json import Jsonb
-from backtesting import run_backtest, calibration_from_backtest, MODEL_FAMILIES
+from backtesting import run_backtest_competition, calibration_from_backtest, MODEL_FAMILIES
 from realtime_model import COMBINATIONS
 
 # Exercise the complete live registry: 12 short windows x 6 horizons and
@@ -65,14 +65,18 @@ def _init_backtest_worker(times, prices):
     _WORKER_PRICES = np.asarray(prices, dtype=float)
 
 def _run_backtest_job(job):
-    style, window_minutes, horizon_minutes, model_family, max_folds, evaluation_start = job
-    result = run_backtest(
+    style, window_minutes, horizon_minutes, max_folds, evaluation_start = job
+    # One process owns the complete family competition for this selector.
+    # Shared historical features are prepared once, then all six estimators
+    # consume the same immutable folds.
+    results = run_backtest_competition(
         _WORKER_TIMES, _WORKER_PRICES,
         window_minutes=window_minutes, horizon_minutes=horizon_minutes,
-        style=style, max_folds=max_folds, model_family=model_family,
+        style=style, max_folds=max_folds,
+        model_families=BACKTEST_MODEL_FAMILIES,
         evaluation_start_minute=evaluation_start,
     )
-    return job, result
+    return job, results
 
 def _align_model_results(results):
     """Compare model families on the exact same out-of-sample timestamps."""
@@ -129,9 +133,8 @@ def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds,worker
             available_days=max(0.0,(int(times[-1])-int(times[0]))/1440.0)
             combinations=BACKTEST_COMBINATIONS
             jobs=[
-                (style,window,horizon,family,max_folds,evaluation_start)
+                (style,window,horizon,max_folds,evaluation_start)
                 for style,window,horizon in combinations
-                for family in BACKTEST_MODEL_FAMILIES
             ]
             # Each process receives the stock history once through its initializer.
             # ML estimators are already single-threaded internally to avoid oversubscription.
@@ -142,9 +145,9 @@ def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds,worker
             ) as pool:
                 futures=[pool.submit(_run_backtest_job,job) for job in jobs]
                 for future in as_completed(futures):
-                    job,result=future.result()
-                    style,window,horizon,family,_,_=job
-                    computed.setdefault((style,window,horizon),{})[family]=result
+                    job,family_results=future.result()
+                    style,window,horizon,_,_=job
+                    computed[(style,window,horizon)]=family_results
             # Align each model competition to identical origins before comparing metrics.
             for style,window,horizon in combinations:
                 family_results=_align_model_results(computed[(style,window,horizon)])
