@@ -1,0 +1,148 @@
+name: Launch all backtest batches at a chosen IST time
+
+on:
+  workflow_dispatch:
+    inputs:
+      hour:
+        description: "Hour in India time (00-23)"
+        required: true
+        type: string
+        default: "12"
+      minute:
+        description: "Minute (00-59)"
+        required: true
+        type: string
+        default: "00"
+      second:
+        description: "Second (00-59)"
+        required: true
+        type: string
+        default: "00"
+      lookback_days:
+        description: "Historical lookback days (30-180)"
+        required: true
+        type: string
+        default: "180"
+      evaluation_days:
+        description: "Evaluation days (0 = all eligible history)"
+        required: true
+        type: string
+        default: "0"
+      max_folds:
+        description: "Maximum walk-forward folds"
+        required: true
+        type: string
+        default: "30"
+      backtest_workers:
+        description: "Python worker processes (1-4 recommended)"
+        required: true
+        type: string
+        default: "2"
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  launch:
+    if: github.repository == 'unnyanr11/Torn-Helper-ML' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Validate inputs and wait until the selected time in India
+        env:
+          TARGET_HOUR: ${{ inputs.hour }}
+          TARGET_MINUTE: ${{ inputs.minute }}
+          TARGET_SECOND: ${{ inputs.second }}
+          LOOKBACK_DAYS: ${{ inputs.lookback_days }}
+          EVALUATION_DAYS: ${{ inputs.evaluation_days }}
+          MAX_FOLDS: ${{ inputs.max_folds }}
+          BACKTEST_WORKERS: ${{ inputs.backtest_workers }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import sys
+          import time
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+
+          time_fields = {
+              "hour": (os.environ["TARGET_HOUR"], 23),
+              "minute": (os.environ["TARGET_MINUTE"], 59),
+              "second": (os.environ["TARGET_SECOND"], 59),
+          }
+          parsed = {}
+          for name, (raw, maximum) in time_fields.items():
+              value = raw.strip()
+              if not re.fullmatch(r"\d{1,2}", value) or not 0 <= int(value) <= maximum:
+                  sys.exit(f"Invalid {name}: allowed range is 0-{maximum}.")
+              parsed[name] = int(value)
+
+          numeric_fields = {
+              "lookback_days": (os.environ["LOOKBACK_DAYS"], 30, 180),
+              "evaluation_days": (os.environ["EVALUATION_DAYS"], 0, 180),
+              "max_folds": (os.environ["MAX_FOLDS"], 1, 1000),
+              "backtest_workers": (os.environ["BACKTEST_WORKERS"], 1, 4),
+          }
+          for name, (raw, minimum, maximum) in numeric_fields.items():
+              if not re.fullmatch(r"\d+", raw.strip()):
+                  sys.exit(f"Invalid {name}: enter a whole number.")
+              value = int(raw)
+              if not minimum <= value <= maximum:
+                  sys.exit(f"Invalid {name}: allowed range is {minimum}-{maximum}.")
+
+          tz = ZoneInfo("Asia/Kolkata")
+          now = datetime.now(tz)
+          target = now.replace(
+              hour=parsed["hour"], minute=parsed["minute"],
+              second=parsed["second"], microsecond=0,
+          )
+          if target <= now:
+              sys.exit(
+                  f"Selected time {target:%Y-%m-%d %H:%M:%S} IST has already "
+                  "passed today. Start a new run and choose a future time."
+              )
+          remaining = (target - now).total_seconds()
+          if remaining > 5 * 60 * 60 + 45 * 60:
+              sys.exit("Selected time is more than 5 hours 45 minutes away; "
+                       "GitHub's six-hour hosted-job limit would be too close.")
+
+          print(f"Current time: {now:%Y-%m-%d %H:%M:%S} IST")
+          print(f"Waiting until: {target:%Y-%m-%d %H:%M:%S} IST")
+          while True:
+              remaining = (target - datetime.now(tz)).total_seconds()
+              if remaining <= 0:
+                  break
+              time.sleep(min(remaining, 1.0))
+          print(f"Target reached: {datetime.now(tz):%Y-%m-%d %H:%M:%S.%f} IST")
+          PY
+
+      - name: Dispatch all nine backtest batches with the selected settings
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          LOOKBACK_DAYS: ${{ inputs.lookback_days }}
+          EVALUATION_DAYS: ${{ inputs.evaluation_days }}
+          MAX_FOLDS: ${{ inputs.max_folds }}
+          BACKTEST_WORKERS: ${{ inputs.backtest_workers }}
+        run: |
+          payload="$(jq -n \
+            --arg lookback "$LOOKBACK_DAYS" \
+            --arg evaluation "$EVALUATION_DAYS" \
+            --arg folds "$MAX_FOLDS" \
+            --arg workers "$BACKTEST_WORKERS" \
+            '{ref:"main",inputs:{lookback_days:$lookback,evaluation_days:$evaluation,max_folds:$folds,backtest_workers:$workers}}')"
+
+          for batch in 01 02 03 04 05 06 07 08 09; do
+            echo "Dispatching backtest batch ${batch}"
+            curl --fail-with-body --silent --show-error \
+              --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 90 \
+              --connect-timeout 15 --max-time 30 \
+              --request POST \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$REPOSITORY/actions/workflows/backtest-batch-${batch}.yml/dispatches" \
+              --data "$payload"
+          done
