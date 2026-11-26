@@ -106,9 +106,18 @@ def process(project,dsn,force_train=False,force_calibrate=False):
                         fitted=train_range(clean_times,clean_values,style,window,horizons,prepared,observed_mask)
                         for model in fitted.values():
                             model.setdefault('trained_through',int(times[-1]))
-                        mapping={(stock,style,window,h):m for h,m in fitted.items()}
-                        save_payloads(conn,'models',mapping)
-                        models.update(mapping)
+                        mapping={}
+                        for horizon, candidate in fitted.items():
+                            key=(stock,style,window,horizon)
+                            existing=models.get(key)
+                            # Backtest-selected model-family winners remain authoritative
+                            # until the next completed backtest batch publishes replacements.
+                            if existing and existing.get('source')=='walk_forward_backtest_winner':
+                                continue
+                            mapping[key]=candidate
+                        if mapping:
+                            save_payloads(conn,'models',mapping)
+                            models.update(mapping)
             origin=int(times[-1])
             if time.time()/60-origin>3:
                 print(json.dumps(dict(event='stale_prices',project=project,stock=stock)),flush=True)
@@ -121,7 +130,7 @@ def process(project,dsn,force_train=False,force_calibrate=False):
                 x,valid=features[window]
                 key=(stock,style,window,horizon)
                 model=models.get(key)
-                if model and model.get('status')=='ready' and origin-model.get('trained_through',0)>60:
+                if model and model.get('status')=='ready' and origin-model.get('trained_through',0)>(180 if model.get('source')=='walk_forward_backtest_winner' else 60):
                     model=dict(status='training',reason='Waiting for a recently trained Python model')
                 result=make_result(model,corrections.get(key),x,valid)
                 if result['status'] != 'ready':
