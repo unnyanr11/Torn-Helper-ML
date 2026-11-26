@@ -118,7 +118,7 @@ def process(project,dsn,force_train=False,force_calibrate=False):
                             # family on current genuine observations rather than falling
                             # back to a different algorithm or a baseline forecast.
                             if existing and existing.get('source')=='walk_forward_backtest_winner':
-                                if origin-int(existing.get('trained_through',0))>1440:
+                                if int(times[-1])-int(existing.get('trained_through',0))>1440:
                                     family=existing.get('model_family')
                                     try:
                                         refreshed=fit_live_model(
