@@ -24,12 +24,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 8
     steps:
-      - name: Wait five minutes, then dispatch this prediction batch again
+      - name: Wait one minute, then dispatch this prediction batch again
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
         run: |
-          sleep 120
+          sleep 60
           curl --fail-with-body --silent --show-error \
             --retry 5 \
             --retry-all-errors \
