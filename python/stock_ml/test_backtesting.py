@@ -2,6 +2,7 @@ import unittest
 import numpy as np
 from backtesting import run_backtest, calibration_from_backtest, MODEL_FAMILIES, _family_predict
 from realtime_model import train_range, RIDGE_ALPHAS, COMBINATIONS
+from backtest_runner import _align_model_results
 
 class BacktestTests(unittest.TestCase):
     def test_model_family_matrix_includes_baselines_trees_and_ensemble(self):
@@ -42,6 +43,33 @@ class BacktestTests(unittest.TestCase):
         self.assertNotIn('total_return',result['metrics'])
         self.assertNotIn('fee_bps',result['config'])
         self.assertNotIn('slippage_bps',result['config'])
+
+
+    def test_model_comparison_aligns_identical_walk_forward_origins(self):
+        def row(origin, predicted, actual):
+            return dict(origin_minute=origin, predicted_return=predicted,
+                        actual_return=actual, raw_return=predicted)
+        results = {
+            'ridge': dict(predictions=[row(10, .01, .02), row(20, -.01, -.02), row(30, .02, .01)],
+                          metrics={}, config={}),
+            'random_forest': dict(predictions=[row(10, .02, .02), row(20, -.02, -.02)],
+                                  metrics={}, config={}),
+        }
+        aligned = _align_model_results(results)
+        self.assertEqual(
+            [p['origin_minute'] for p in aligned['ridge']['predictions']],
+            [10, 20],
+        )
+        self.assertEqual(
+            [p['origin_minute'] for p in aligned['random_forest']['predictions']],
+            [10, 20],
+        )
+        self.assertEqual(aligned['ridge']['metrics']['folds'], 2)
+        self.assertEqual(aligned['random_forest']['metrics']['folds'], 2)
+        self.assertEqual(
+            aligned['ridge']['metrics']['comparison_fold_policy'],
+            'intersection_of_all_model_family_origins',
+        )
 
     def test_calibration_needs_minimum_samples(self):
         result=calibration_from_backtest([dict(raw_return=.01,actual_return=.02,origin_minute=i) for i in range(10)])
