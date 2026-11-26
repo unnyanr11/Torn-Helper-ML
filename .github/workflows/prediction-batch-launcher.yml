@@ -1,6 +1,7 @@
 name: Launch all Python prediction batches at 03:10 IST (one time)
 
 on:
+  workflow_dispatch:
   schedule:
     - cron: '10 3 * * *'
       timezone: 'Asia/Kolkata'
@@ -20,7 +21,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
         run: |
-          if [ "$(date -u +%Y-%m-%d)" != "2026-11-27" ]; then
+          if [ "$(date -u +%Y-%m-%d)" != "2026-11-26" ]; then
             echo "One-time launch date has passed or has not arrived; no batches dispatched."
             exit 0
           fi
