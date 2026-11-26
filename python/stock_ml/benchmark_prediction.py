@@ -8,7 +8,21 @@ from backtesting import fit_live_model
 from clean_series import reconstruct_short_gaps
 from realtime_model import COMBINATIONS, feature_matrix, infer_model, prepare_series
 
-ASSIGNMENTS = {i: i for i in range(1, 7)}
+DEFAULT_ASSIGNMENTS = {i: i for i in range(1, 7)}
+
+
+def benchmark_assignments():
+    """Return the normal per-stock assignments or one forced family for all stocks."""
+    raw = os.getenv("BENCHMARK_ALGORITHM_ID", "").strip()
+    if not raw:
+        return DEFAULT_ASSIGNMENTS.copy()
+    try:
+        algorithm_id = int(raw)
+    except ValueError as exc:
+        raise SystemExit("BENCHMARK_ALGORITHM_ID must be an integer from 1 to 6") from exc
+    if algorithm_id not in ALGORITHM_REGISTRY:
+        raise SystemExit("BENCHMARK_ALGORITHM_ID must be an integer from 1 to 6")
+    return {stock: algorithm_id for stock in range(1, 7)}
 
 
 def _training_origins(times, observed, max_rows):
@@ -22,7 +36,8 @@ def _training_origins(times, observed, max_rows):
 
 def run_stock(project, dsn, stock, lookback, max_rows):
     started = time.perf_counter()
-    family = family_for_algorithm_id(ASSIGNMENTS[stock])
+    assignments = benchmark_assignments()
+    family = family_for_algorithm_id(assignments[stock])
     with psycopg.connect(dsn, sslmode="require", connect_timeout=20) as conn:
         setting = conn.execute("select project_number,enabled from stock_engine.settings where singleton").fetchone()
         if not setting or int(setting[0]) != project or not setting[1]:
@@ -82,7 +97,7 @@ def run_stock(project, dsn, stock, lookback, max_rows):
         infer_s += time.perf_counter() - t1
         predicted += 1
     return {
-        "stock_id": stock, "algorithm_id": ASSIGNMENTS[stock], "model_family": family,
+        "stock_id": stock, "algorithm_id": assignments[stock], "model_family": family,
         "raw_observations": len(rows), "usable_observations": len(times),
         "selectors_total": len(COMBINATIONS), "selectors_predicted": predicted,
         "selectors_skipped": len(COMBINATIONS)-predicted, "skip_reasons": dict(skipped),
@@ -99,7 +114,7 @@ def main():
     if not 30 <= lookback <= 180 or not 240 <= max_rows <= 10000:
         raise SystemExit("Invalid benchmark lookback or training row cap")
     projects = {int(k): v for k, v in json.loads(os.environ["STOCK_ML_PROJECTS_JSON"]).items()}
-    workers = int(os.getenv("BENCHMARK_WORKERS", "2"))
+    workers = int(os.getenv("BENCHMARK_WORKERS", "2"))\n    assignments = benchmark_assignments()
     if not 1 <= workers <= 6:
         raise SystemExit("BENCHMARK_WORKERS must be between 1 and 6")
     results, failures = [], []
@@ -130,7 +145,7 @@ def main():
     summary = {
         "lookback_days": lookback, "max_training_rows_per_selector": max_rows,
         "worker_processes": workers,
-        "algorithm_assignments": {str(k): {"algorithm_id": k, "family": ALGORITHM_REGISTRY[k]} for k in ASSIGNMENTS.values()},
+        "benchmark_mode": "forced_single_algorithm" if len(set(assignments.values())) == 1 else "per_stock_algorithms",\n        "algorithm_assignments": {str(stock): {"algorithm_id": algorithm_id, "family": ALGORITHM_REGISTRY[algorithm_id]} for stock, algorithm_id in assignments.items()},
         "stocks_completed": len(results), "failures": failures,
         "selectors_predicted": sum(r["selectors_predicted"] for r in results),
         "selectors_skipped": sum(r["selectors_skipped"] for r in results),
