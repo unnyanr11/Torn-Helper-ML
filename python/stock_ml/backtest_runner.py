@@ -134,7 +134,7 @@ def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds):
             # Technical strategies are evaluated separately from ML regressors.
             # The same private shard tables are reused; no new grants or RLS changes.
             strategy_times = [int(value) * 60 for value in times]
-            strategy_start = int(evaluation_start * 60) if evaluation_start is not None else None
+            strategy_start = (int(evaluation_start * 60) if evaluation_start is not None else\n                             strategy_times[int(len(strategy_times) * 0.70)])
             for horizon_minutes in (60, 180, 360, 720, 1080, 1440):
                 competition = run_strategy_competition(
                     strategy_times, prices, horizon_steps=horizon_minutes,
@@ -145,7 +145,7 @@ def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds):
                     if strategy_name.startswith('baseline_'):
                         continue
                     run_id = uuid.uuid4()
-                    config = dict(style='short', window_minutes=43200,
+                    config = dict(style='short', window_minutes=lookback_days * 1440,
                         horizon_minutes=horizon_minutes, strategy_family=strategy_name,
                         model_family='technical_strategy', fee_bps=10,
                         slippage_bps=5, minimum_net_return=0.002,
