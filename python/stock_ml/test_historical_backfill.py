@@ -4,7 +4,7 @@ import json
 from urllib.parse import urlparse, parse_qs
 
 from python.stock_ml.historical_backfill import (
-    TICKERS, fetch_chunk, minute_chunks, parse_rows,
+    TICKERS, assigned_stock_ids, fetch_chunk, minute_chunks, parse_rows,
 )
 
 
@@ -12,8 +12,10 @@ class BackfillTests(unittest.TestCase):
     def test_all_35_stocks_are_assigned_to_18_shards(self):
         self.assertEqual(len(TICKERS), 35)
         for project in range(1, 18):
-            self.assertEqual([project * 2 - 1, project * 2],
-                             [project * 2 - 1, project * 2])
+            self.assertEqual(assigned_stock_ids(project), [project * 2 - 1, project * 2])
+        self.assertEqual(assigned_stock_ids(18), [35])
+        with self.assertRaises(ValueError):
+            assigned_stock_ids(19)
         self.assertEqual(TICKERS[35], "PTS")
 
     def test_chunks_are_minute_aligned_non_overlapping_and_bounded(self):
