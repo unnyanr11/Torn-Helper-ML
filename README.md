@@ -49,8 +49,11 @@ scheduling is best-effort: GitHub may delay or drop scheduled runs.
 ## Aggressive historical minute-price backfill
 
 Run `.github/workflows/historical-backfill.yml` manually from the Actions tab
-to fill missing minute observations directly in SG1-SG18. The default is the
-full 180-day short-term retention window. SG1-SG17 each process their two
+to fill missing minute observations directly in SG1-SG18. The default is a full 365-day historical request. This archive is independent
+of the short-term model worker, which may continue to use a shorter training
+retention window. Tornsy may not have a complete year available for every
+stock; fetched counts and actual earliest/latest timestamps must be audited
+before treating the archive as a complete year. SG1-SG17 each process their two
 assigned stocks; SG18 processes stock 35. The worker validates each database's
 `stock_engine.settings` project number and exact stock assignment before
 writing.
