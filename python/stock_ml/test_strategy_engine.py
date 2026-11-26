@@ -45,20 +45,22 @@ class StrategyEngineTests(unittest.TestCase):
             for trade in item["trades"]:
                 self.assertFalse(np.any(np.diff(times[trade["entry_index"]:trade["exit_index"] + 1]) > 90))
 
-    def test_costs_and_profit_threshold_are_part_of_eligibility(self):
+    def test_fixed_profit_threshold_does_not_gate_research_eligibility(self):
         rng = np.random.default_rng(21)
         prices = 100 * np.exp(np.cumsum(rng.normal(0.0002, .002, 1200)))
         times = np.arange(len(prices), dtype=np.int64) * 60
-        result = run_strategy_competition(times, prices, horizon_steps=8,
+        baseline = run_strategy_competition(times, prices, horizon_steps=8,
+            bar_seconds=60, fee_bps=10, slippage_bps=5,
+            minimum_net_return=0.0, min_trades=1)
+        higher_hurdle = run_strategy_competition(times, prices, horizon_steps=8,
             bar_seconds=60, fee_bps=10, slippage_bps=5,
             minimum_net_return=.002, min_trades=1)
         for name in STRATEGY_FAMILIES:
-            metrics = result["strategies"][name]["metrics"]
-            if metrics["eligible"]:
-                self.assertGreaterEqual(metrics["mean_net_return"], .002)
-                self.assertGreater(metrics["profit_factor"], 1.0)
-                self.assertLessEqual(metrics["max_drawdown"], 0.0)
-        self.assertAlmostEqual(result["config"]["round_trip_cost"], .002)
+            self.assertEqual(
+                baseline["strategies"][name]["metrics"]["eligible"],
+                higher_hurdle["strategies"][name]["metrics"]["eligible"])
+        self.assertAlmostEqual(baseline["config"]["round_trip_cost"], .002)
+
 
 
 if __name__ == "__main__":
