@@ -36,7 +36,8 @@ def _training_origins(times, observed, max_rows):
 
 def run_stock(project, dsn, stock, lookback, max_rows):
     started = time.perf_counter()
-    assignments = benchmark_assignments()\n    family = family_for_algorithm_id(assignments[stock])
+    assignments = benchmark_assignments()
+    family = family_for_algorithm_id(assignments[stock])
     with psycopg.connect(dsn, sslmode="require", connect_timeout=20) as conn:
         setting = conn.execute("select project_number,enabled from stock_engine.settings where singleton").fetchone()
         if not setting or int(setting[0]) != project or not setting[1]:
