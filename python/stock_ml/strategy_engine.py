@@ -150,6 +150,8 @@ def run_strategy_competition(times, prices, *, horizon_steps, bar_seconds,
         raise ValueError("minimum_net_return must be finite and non-negative")
     if initial_capital <= 0 or min_trades < 1 or max_drawdown <= 0:
         raise ValueError("invalid capital, trade count or drawdown limit")
+    fee = fee_bps / 10000.0
+    slip = slippage_bps / 10000.0
     cost = (fee_bps + 2.0 * slippage_bps) / 10000.0
     if round_trip_cost is not None:
         cost = float(round_trip_cost)
@@ -197,7 +199,8 @@ def run_strategy_competition(times, prices, *, horizon_steps, bar_seconds,
                     break
             exit_price = float(p[exit_i])
             gross = exit_price / entry - 1.0
-            net = (1.0 + gross) * (1.0 - cost) - 1.0
+            net = ((1.0 + gross) * (1.0 - fee - slip) / (1.0 + slip) - 1.0
+                   if round_trip_cost is None else (1.0 + gross) * (1.0 - cost) - 1.0)
             before = equity
             equity *= max(0.0, 1.0 + position_weight * net)
             peak = max(peak, equity)
@@ -234,7 +237,9 @@ def run_strategy_competition(times, prices, *, horizon_steps, bar_seconds,
     # with a weak candidate set. Buy-and-hold includes one round-trip cost.
     first = int(np.searchsorted(t, t[start] + bar_seconds)) if start < len(t) else len(t)
     last = len(t) - 1
-    baseline_return = ((p[last] / p[first]) * (1.0 - cost) - 1.0) if first < last else 0.0
+    baseline_return = (((p[last] / p[first]) * (1.0 - fee - slip) / (1.0 + slip) - 1.0)
+                       if first < last and round_trip_cost is None else
+                       ((p[last] / p[first]) * (1.0 - cost) - 1.0) if first < last else 0.0)
     results["baseline_buy_hold"] = dict(status="benchmark", metrics=dict(
         trades=1 if first < last else 0, total_return=baseline_return,
         max_drawdown=None, eligible=False), trades=[])
