@@ -1,5 +1,5 @@
 """Run walk-forward backtests against each configured shard's observed prices."""
-import json, os, sys, uuid, traceback
+import json, os, sys, uuid, traceback, multiprocessing
 import psycopg
 import numpy as np
 from psycopg.types.json import Jsonb
@@ -138,7 +138,7 @@ def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds,worker
             computed={}
             with ProcessPoolExecutor(
                 max_workers=workers, initializer=_init_backtest_worker,
-                initargs=(times,prices),
+                initargs=(times,prices), mp_context=multiprocessing.get_context('spawn'),
             ) as pool:
                 futures=[pool.submit(_run_backtest_job,job) for job in jobs]
                 for future in as_completed(futures):
