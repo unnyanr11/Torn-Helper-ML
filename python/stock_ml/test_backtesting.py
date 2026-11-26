@@ -179,4 +179,38 @@ class BacktestTests(unittest.TestCase):
         self.assertGreaterEqual(result['metrics']['selection_rows'],30)
         self.assertGreaterEqual(result['metrics']['validation_rows'],50)
 
+
+    def test_live_fit_reuses_cached_window_features_without_changing_model(self):
+        from unittest.mock import patch
+        import backtesting
+        rng = np.random.default_rng(811)
+        times = np.arange(0, 12000, dtype=np.int64)
+        prices = 100 * np.exp(np.cumsum(rng.normal(0.00001, 0.0003, len(times))))
+        observed = np.ones(len(times), dtype=bool)
+        origins = times[times % 15 == 0]
+        features, valid = feature_matrix(times, prices, origins, 60)
+        cache = (origins, features, valid)
+        direct = fit_live_model(times, prices, window_minutes=60, horizon_minutes=30,
+                                model_family='ridge', observed_mask=observed)
+        with patch('backtesting.feature_matrix', wraps=backtesting.feature_matrix) as build:
+            cached = fit_live_model(times, prices, window_minutes=60, horizon_minutes=30,
+                                    model_family='ridge', observed_mask=observed,
+                                    feature_data=cache)
+            self.assertEqual(build.call_count, 0)
+        self.assertEqual(direct['training_rows'], cached['training_rows'])
+        for key in ('mean', 'scale', 'coef'):
+            np.testing.assert_allclose(direct['parameters'][key], cached['parameters'][key],
+                                       rtol=0, atol=0)
+        self.assertEqual(direct['parameters']['intercept'], cached['parameters']['intercept'])
+
+    def test_live_fit_rejects_misaligned_cached_feature_origins(self):
+        rng = np.random.default_rng(812)
+        times = np.arange(0, 9000, dtype=np.int64)
+        prices = 100 * np.exp(np.cumsum(rng.normal(0, 0.0002, len(times))))
+        origins = times[times % 15 == 0]
+        features, valid = feature_matrix(times, prices, origins, 60)
+        with self.assertRaisesRegex(ValueError, 'Cached feature data'):
+            fit_live_model(times, prices, window_minutes=60, horizon_minutes=30,
+                           model_family='ridge', feature_data=(origins[1:], features, valid))
+
 if __name__=='__main__': unittest.main()

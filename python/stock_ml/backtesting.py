@@ -322,7 +322,7 @@ def export_estimator(estimator, family):
     raise ValueError("Unsupported exported model family: "+str(family))
 
 
-def fit_live_model(times, prices, *, window_minutes, horizon_minutes, model_family, observed_mask=None, prepared=None, max_training_rows=None):
+def fit_live_model(times, prices, *, window_minutes, horizon_minutes, model_family, observed_mask=None, prepared=None, max_training_rows=None, feature_data=None):
     """Fit the selected winner on matured genuine observations.
 
     Optional prepared features and row caps let the read-only benchmark exercise
@@ -348,9 +348,19 @@ def fit_live_model(times, prices, *, window_minutes, horizon_minutes, model_fami
             raise ValueError("max_training_rows must be at least 240")
         if len(origins)>max_training_rows:
             origins=origins[np.linspace(0,len(origins)-1,max_training_rows).astype(int)]
-    features,valid=feature_matrix(times,prices,origins,window_minutes,prepared)
+    if feature_data is None:
+        features,valid=feature_matrix(times,prices,origins,window_minutes,prepared)
+    else:
+        cached_origins,features,valid=feature_data
+        cached_origins=np.asarray(cached_origins,dtype=np.int64)
+        features=np.asarray(features,dtype=float)
+        valid=np.asarray(valid,dtype=bool)
+        if (not np.array_equal(cached_origins,origins) or features.ndim!=2
+                or len(features)!=len(origins) or len(valid)!=len(origins)):
+            raise ValueError("Cached feature data does not match the selected training origins")
     targets=exact(times,prices,origins+horizon_minutes)
     current=exact(times,prices,origins)
+    valid=valid.copy()
     valid &= np.isfinite(targets) & np.isfinite(current) & (current>0)
     if observed_mask is not None:
         target_idx=np.searchsorted(times,origins+horizon_minutes)

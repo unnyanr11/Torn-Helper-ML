@@ -10,6 +10,16 @@ from realtime_model import COMBINATIONS, feature_matrix, infer_model, prepare_se
 
 ASSIGNMENTS = {i: i for i in range(1, 7)}
 
+
+def _training_origins(times, observed, max_rows):
+    """Match fit_live_model's genuine 15-minute origins and deterministic row cap."""
+    origins = times[times % 15 == 0]
+    origins = origins[observed[np.searchsorted(times, origins)]]
+    if len(origins) > max_rows:
+        origins = origins[np.linspace(0, len(origins) - 1, max_rows).astype(int)]
+    return origins
+
+
 def run_stock(project, dsn, stock, lookback, max_rows):
     started = time.perf_counter()
     family = family_for_algorithm_id(ASSIGNMENTS[stock])
@@ -32,6 +42,18 @@ def run_stock(project, dsn, stock, lookback, max_rows):
     observed = ~synthetic
     prepared = prepare_series(times, prices)
     origin = int(times[-1])
+    training_origins = _training_origins(times, observed, max_rows)
+
+    # Features depend on analysis window, not forecast horizon. Reuse each
+    # training matrix and latest inference row across all horizons per window.
+    feature_cache = {}
+    latest_cache = {}
+    for window in sorted({window for _, window, _ in COMBINATIONS}):
+        features, valid = feature_matrix(times, prices, training_origins, window, prepared)
+        feature_cache[window] = (training_origins, features, valid)
+        latest_cache[window] = feature_matrix(
+            times, prices, np.asarray([origin]), window, prepared
+        )
     prep_s = time.perf_counter() - prep
     fit_s = infer_s = 0.0
     predicted = 0
@@ -42,7 +64,7 @@ def run_stock(project, dsn, stock, lookback, max_rows):
             model = fit_live_model(times, prices, window_minutes=window,
                 horizon_minutes=horizon, model_family=family,
                 observed_mask=observed, prepared=prepared,
-                max_training_rows=max_rows)
+                max_training_rows=max_rows, feature_data=feature_cache[window])
         except ValueError as exc:
             fit_s += time.perf_counter() - t0
             skipped[str(exc)] += 1
@@ -50,7 +72,7 @@ def run_stock(project, dsn, stock, lookback, max_rows):
         elapsed = time.perf_counter() - t0
         fit_s += elapsed
         t1 = time.perf_counter()
-        x, valid = feature_matrix(times, prices, np.asarray([origin]), window, prepared)
+        x, valid = latest_cache[window]
         if not bool(valid[0]):
             skipped["latest_feature_window_incomplete"] += 1
             continue
@@ -64,6 +86,8 @@ def run_stock(project, dsn, stock, lookback, max_rows):
         "raw_observations": len(rows), "usable_observations": len(times),
         "selectors_total": len(COMBINATIONS), "selectors_predicted": predicted,
         "selectors_skipped": len(COMBINATIONS)-predicted, "skip_reasons": dict(skipped),
+        "feature_cache_windows": len(feature_cache),
+        "feature_matrix_builds": len(feature_cache) * 2,
         "fetch_seconds": round(fetch_s, 3), "preprocessing_seconds": round(prep_s, 3),
         "fit_seconds": round(fit_s, 3), "inference_seconds": round(infer_s, 3),
         "stock_total_seconds": round(time.perf_counter()-started, 3)
@@ -110,6 +134,7 @@ def main():
         "stocks_completed": len(results), "failures": failures,
         "selectors_predicted": sum(r["selectors_predicted"] for r in results),
         "selectors_skipped": sum(r["selectors_skipped"] for r in results),
+        "feature_matrix_builds": sum(r["feature_matrix_builds"] for r in results),
         "total_wall_clock_seconds": round(elapsed, 3), "stocks": results
     }
     rendered = json.dumps(summary, indent=2)
@@ -118,10 +143,10 @@ def main():
     if path:
         with open(path, "a", encoding="utf-8") as out:
             out.write("# Six-stock Python prediction benchmark\n\n")
-            out.write("| Stock | Algorithm | Predictions | Skipped | Fit seconds | Inference seconds | Total seconds |\n|---:|---|---:|---:|---:|---:|---:|\n")
+            out.write("| Stock | Algorithm | Predictions | Skipped | Feature builds | Fit seconds | Inference seconds | Total seconds |\n|---:|---|---:|---:|---:|---:|---:|---:|\n")
             for r in results:
-                out.write(f"| {r['stock_id']} | {r['algorithm_id']} — {r['model_family']} | {r['selectors_predicted']}/{r['selectors_total']} | {r['selectors_skipped']} | {r['fit_seconds']:.3f} | {r['inference_seconds']:.3f} | {r['stock_total_seconds']:.3f} |\n")
-            out.write(f"\n**Worker processes:** {workers}\n\n**Total wall-clock:** {elapsed:.3f} seconds\n\n**Completed stocks:** {len(results)}/6\n")
+                out.write(f"| {r['stock_id']} | {r['algorithm_id']} — {r['model_family']} | {r['selectors_predicted']}/{r['selectors_total']} | {r['selectors_skipped']} | {r['feature_matrix_builds']} | {r['fit_seconds']:.3f} | {r['inference_seconds']:.3f} | {r['stock_total_seconds']:.3f} |\n")
+            out.write(f"\n**Worker processes:** {workers}\n\n**Feature matrix builds:** {summary['feature_matrix_builds']}\n\n**Total wall-clock:** {elapsed:.3f} seconds\n\n**Completed stocks:** {len(results)}/6\n")
             if failures:
                 out.write("\n## Failures\n")
                 for f in failures:
