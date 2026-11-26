@@ -49,11 +49,37 @@ def _metrics(values):
 
 def _prepare_backtest_folds(times, prices, *, window_minutes, horizon_minutes,
                             evaluation_start_minute, max_folds, min_train_rows):
-    """Build each walk-forward fold once; model families share these immutable arrays."""
+    """Build leakage-safe folds from one causal feature pass over the stock history.
+
+    Feature rows at an origin only use observations at or before that origin.
+    Labels are separately gated by target <= fold origin, matching the old
+    prefix-only implementation and preventing future-label leakage.
+    """
     stride = 15
-    candidates = times[(times % stride) == 0]
-    candidates = candidates[
-        candidates >= times[0] + window_minutes + horizon_minutes + min_train_rows * stride
+    prepared = prepare_series(times, prices)
+    all_origins = times[times % stride == 0]
+    if not len(all_origins):
+        return []
+
+    # This is the expensive operation: calculate each window's features once,
+    # rather than once for every walk-forward fold.
+    features_all, feature_ok_all = feature_matrix(
+        times, prices, all_origins, window_minutes, prepared
+    )
+    targets_all = exact(times, prices, all_origins + horizon_minutes)
+    current_all = exact(times, prices, all_origins)
+    matured_all = (
+        feature_ok_all & np.isfinite(targets_all)
+        & np.isfinite(current_all) & (current_all > 0)
+    )
+    returns_all = np.full(len(all_origins), np.nan, dtype=float)
+    returns_all[matured_all] = (
+        targets_all[matured_all] / current_all[matured_all] - 1.0
+    )
+
+    candidates = all_origins[
+        all_origins >= times[0] + window_minutes
+        + horizon_minutes + min_train_rows * stride
     ]
     if evaluation_start_minute is not None:
         candidates = candidates[candidates >= int(evaluation_start_minute)]
@@ -69,36 +95,25 @@ def _prepare_backtest_folds(times, prices, *, window_minutes, horizon_minutes,
 
     folds = []
     for origin in non_overlapping:
-        end = int(np.searchsorted(times, origin, side='right'))
-        train_t, train_p = times[:end], prices[:end]
-        if len(train_t) < min_train_rows:
+        # Exact prefix boundary: the original fold only saw rows whose target
+        # had matured by the current origin. Do not use later labels.
+        eligible = (
+            matured_all & (all_origins + horizon_minutes <= origin)
+        )
+        row_indices = np.flatnonzero(eligible)
+        if len(row_indices) < 240:
             continue
 
-        # The expensive time-series preparation and feature extraction are
-        # independent of model family, so do them once for all six competitors.
-        prepared = prepare_series(train_t, train_p)
-        stride_origins = train_t[train_t % stride == 0]
-        features_all, feature_ok_all = feature_matrix(
-            train_t, train_p, stride_origins, window_minutes, prepared
-        )
-        # The current forecast origin is itself one of the 15-minute feature
-        # origins. Reuse that row rather than calculating its features twice.
-        origin_index = int(np.searchsorted(stride_origins, origin))
-        if (origin_index >= len(stride_origins)
-                or int(stride_origins[origin_index]) != origin
+        # The origin feature itself must be valid and is evaluated separately.
+        origin_index = int(np.searchsorted(all_origins, origin))
+        if (origin_index >= len(all_origins)
+                or int(all_origins[origin_index]) != origin
                 or not bool(feature_ok_all[origin_index])):
             continue
-        x = features_all[origin_index:origin_index + 1]
 
-        targets = exact(train_t, train_p, stride_origins + horizon_minutes)
-        current_prices = exact(train_t, train_p, stride_origins)
-        matured = feature_ok_all & np.isfinite(targets) & np.isfinite(current_prices) & (current_prices > 0)
-        origins = stride_origins[matured]
-        features = features_all[matured]
-        if len(origins) < 240:
-            continue
-
-        y = targets[matured] / current_prices[matured] - 1.0
+        origins = all_origins[row_indices]
+        features = features_all[row_indices]
+        y = returns_all[row_indices]
         boundary = origins[int(len(origins) * .75)]
         fit_mask = origins + horizon_minutes < boundary
         val_mask = origins >= boundary
@@ -112,7 +127,7 @@ def _prepare_backtest_folds(times, prices, *, window_minutes, horizon_minutes,
 
         folds.append(dict(
             origin=origin,
-            x_eval=x,
+            x_eval=features_all[origin_index:origin_index + 1],
             x_fit=features[fit_mask],
             y_fit=y[fit_mask],
             x_validation=features[val_mask],
@@ -124,7 +139,6 @@ def _prepare_backtest_folds(times, prices, *, window_minutes, horizon_minutes,
             actual=future / current - 1.0,
         ))
     return folds
-
 
 def _results_from_folds(folds, *, families, window_minutes, horizon_minutes,
                          evaluation_start_minute):
