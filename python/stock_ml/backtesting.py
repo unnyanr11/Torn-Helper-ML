@@ -124,10 +124,10 @@ def calibrate_profit_threshold(predictions,*,estimated_trading_cost,
     else:
         test_metrics=dict(trades=0,mean_net_return=None,win_rate=None,profit_factor=None,
             max_drawdown=0.0,total_return=0.0)
-    return dict(**base,status='calibrated',active=True,
-        selected_minimum_net_return=threshold,calibration_metrics=best,
-        calibration_candidates=candidates,untouched_holdout=test_metrics,
-        holdout_start=int(holdout[0]['origin_minute']))
+    return {**base,'status':'calibrated','active':True,
+        'selected_minimum_net_return':threshold,'calibration_metrics':best,
+        'calibration_candidates':candidates,'untouched_holdout':test_metrics,
+        'holdout_start':int(holdout[0]['origin_minute'])}
 
 def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='short',
                  fee_bps=10.0,slippage_bps=5.0,initial_capital=10000.0,
