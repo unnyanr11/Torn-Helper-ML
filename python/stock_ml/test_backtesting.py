@@ -35,7 +35,7 @@ class BacktestTests(unittest.TestCase):
             predicted=.012 if i%2==0 else .001
             actual=.010 if i%2==0 else -.004
             rows.append(dict(origin_minute=i,predicted_return=predicted,
-                uncertainty=.001,actual_return=actual,trade_on='signal'))
+                uncertainty=.001,actual_return=actual,trade_on='signal',approved=True))
         result=calibrate_profit_threshold(rows,estimated_trading_cost=.002,
             minimum_calibration_samples=20,minimum_calibration_trades=5,
             minimum_holdout_samples=6)
