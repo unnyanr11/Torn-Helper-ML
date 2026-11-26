@@ -39,8 +39,8 @@ class BacktestTests(unittest.TestCase):
                 times,prices,window_minutes=60,horizon_minutes=15,max_folds=3,
                 min_train_rows=200,model_families=('ridge','elastic_net'),
             )
-            # Feature preparation occurs once per eligible fold, not once per family.
-            self.assertEqual(prepare.call_count,3)
+            # Full-series preparation is performed once for the competition, not once per fold or family.
+            self.assertEqual(prepare.call_count,1)
 
         for family in ('ridge','elastic_net'):
             individual=run_backtest(
@@ -61,6 +61,45 @@ class BacktestTests(unittest.TestCase):
                 [p['actual_return'] for p in individual['predictions']],
                 rtol=0,atol=1e-12,
             )
+
+    def test_feature_cache_is_reused_across_forecast_horizons_without_leakage(self):
+        from unittest.mock import patch
+        import backtesting
+
+        rng=np.random.default_rng(233)
+        times=np.arange(0,24000,dtype=np.int64)
+        prices=100*np.exp(np.cumsum(rng.normal(0.00001,0.0002,len(times))))
+        cache={}
+        prepared=backtesting.prepare_series(times,prices)
+        with patch('backtesting.feature_matrix', wraps=backtesting.feature_matrix) as matrix:
+            short=run_backtest_competition(
+                times,prices,window_minutes=120,horizon_minutes=30,max_folds=3,
+                min_train_rows=200,model_families=('ridge',),
+                prepared=prepared,feature_cache=cache,
+            )
+            long=run_backtest_competition(
+                times,prices,window_minutes=120,horizon_minutes=60,max_folds=3,
+                min_train_rows=200,model_families=('ridge',),
+                prepared=prepared,feature_cache=cache,
+            )
+            self.assertEqual(matrix.call_count,1)
+
+        # Cached computation must be numerically identical to a fresh,
+        # horizon-specific computation.
+        fresh=run_backtest_competition(
+            times,prices,window_minutes=120,horizon_minutes=60,max_folds=3,
+            min_train_rows=200,model_families=('ridge',),
+        )
+        self.assertEqual(
+            [p['origin_minute'] for p in long['ridge']['predictions']],
+            [p['origin_minute'] for p in fresh['ridge']['predictions']],
+        )
+        np.testing.assert_allclose(
+            [p['predicted_return'] for p in long['ridge']['predictions']],
+            [p['predicted_return'] for p in fresh['ridge']['predictions']],
+            rtol=0,atol=1e-12,
+        )
+        self.assertTrue(short['ridge']['predictions'])
 
     def test_ensemble_reuses_base_model_fits(self):
         from unittest.mock import patch
