@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from backtesting import run_backtest, calibration_from_backtest, MODEL_FAMILIES, _family_predict
+from backtesting import run_backtest, calibration_from_backtest, calibrate_profit_threshold, MODEL_FAMILIES, _family_predict
 from realtime_model import train_range, RIDGE_ALPHAS, COMBINATIONS
 
 class BacktestTests(unittest.TestCase):
@@ -28,6 +28,22 @@ class BacktestTests(unittest.TestCase):
     def test_rejects_invalid_costs(self):
         with self.assertRaises(ValueError):
             run_backtest(np.arange(1000),np.ones(1000),window_minutes=60,horizon_minutes=60,fee_bps=999)
+
+    def test_profit_threshold_is_selected_on_calibration_and_reported_on_later_holdout(self):
+        rows=[]
+        for i in range(50):
+            predicted=.012 if i%2==0 else .001
+            actual=.010 if i%2==0 else -.004
+            rows.append(dict(origin_minute=i,predicted_return=predicted,
+                uncertainty=.001,actual_return=actual,trade_on='signal'))
+        result=calibrate_profit_threshold(rows,estimated_trading_cost=.002,
+            minimum_calibration_samples=20,minimum_calibration_trades=5,
+            minimum_holdout_samples=6)
+        self.assertEqual(result['status'],'calibrated')
+        self.assertEqual(result['selected_minimum_net_return'],0.0)
+        self.assertEqual(result['calibration_samples'],35)
+        self.assertEqual(result['holdout_samples'],15)
+        self.assertEqual(result['untouched_holdout']['trades'],15)
 
     def test_calibration_needs_minimum_samples(self):
         result=calibration_from_backtest([dict(raw_return=.01,actual_return=.02,origin_minute=i) for i in range(10)])
