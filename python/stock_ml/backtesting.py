@@ -46,75 +46,190 @@ def _metrics(values):
     return dict(count=int(len(a)),mean=float(np.mean(a)),mae=float(np.mean(np.abs(a))),
                 rmse=float(np.sqrt(np.mean(a*a))))
 
-def run_backtest(times,prices,*,window_minutes:int,horizon_minutes:int,style='short',
-                 max_folds=120,min_train_rows=200,model_family='ridge',evaluation_start_minute=None):
-    times,prices=validate_series(times,prices)
-    if style != 'short' or window_minutes<15 or horizon_minutes<15 or model_family not in MODEL_FAMILIES:
-        raise ValueError('Invalid model style, window, horizon or model family')
-    if max_folds<1 or min_train_rows<1:
-        raise ValueError('Invalid fold or training-row limit')
-    stride=15
-    candidates=times[(times%stride)==0]
-    candidates=candidates[candidates>=times[0]+window_minutes+horizon_minutes+min_train_rows*stride]
+def _prepare_backtest_folds(times, prices, *, window_minutes, horizon_minutes,
+                            evaluation_start_minute, max_folds, min_train_rows):
+    """Build each walk-forward fold once; model families share these immutable arrays."""
+    stride = 15
+    candidates = times[(times % stride) == 0]
+    candidates = candidates[
+        candidates >= times[0] + window_minutes + horizon_minutes + min_train_rows * stride
+    ]
     if evaluation_start_minute is not None:
-        candidates=candidates[candidates>=int(evaluation_start_minute)]
-    if len(candidates)>max_folds:
-        candidates=candidates[np.linspace(0,len(candidates)-1,max_folds).astype(int)]
-    non_overlapping=[]; last_exit=-1
+        candidates = candidates[candidates >= int(evaluation_start_minute)]
+    if len(candidates) > max_folds:
+        candidates = candidates[np.linspace(0, len(candidates) - 1, max_folds).astype(int)]
+
+    non_overlapping = []
+    last_exit = -1
     for candidate in candidates:
-        if int(candidate)>=last_exit:
-            non_overlapping.append(int(candidate)); last_exit=int(candidate)+horizon_minutes
-    predictions=[]
+        if int(candidate) >= last_exit:
+            non_overlapping.append(int(candidate))
+            last_exit = int(candidate) + horizon_minutes
+
+    folds = []
     for origin in non_overlapping:
-        end=int(np.searchsorted(times,origin,side='right'))
-        train_t,train_p=times[:end],prices[:end]
-        if len(train_t)<min_train_rows: continue
-        prepared=prepare_series(train_t,train_p)
-        x,valid=feature_matrix(train_t,train_p,[origin],window_minutes,prepared)
-        if not bool(valid[0]): continue
-        stride_origins=train_t[train_t%stride==0]
-        features,feature_ok=feature_matrix(train_t,train_p,stride_origins,window_minutes,prepared)
-        targets=exact(train_t,train_p,stride_origins+horizon_minutes)
-        current_prices=exact(train_t,train_p,stride_origins)
-        matured=feature_ok & np.isfinite(targets) & np.isfinite(current_prices) & (current_prices>0)
-        origins=stride_origins[matured]; features=features[matured]
-        if len(origins)<240: continue
-        y=targets[matured]/current_prices[matured]-1.0
-        boundary=origins[int(len(origins)*.75)]
-        fit_mask=origins+horizon_minutes<boundary
-        val_mask=origins>=boundary
-        if fit_mask.sum()<100 or val_mask.sum()<30: continue
-        val_y=y[val_mask]
-        val_pred=_family_predict(model_family,features[fit_mask],y[fit_mask],features[val_mask])
-        validation_mae=float(np.mean(np.abs(val_y-val_pred)))
-        baseline=float(np.mean(np.abs(val_y)))
-        approved=bool(baseline>0 and validation_mae<baseline*.98)
-        final_prediction=float(_family_predict(model_family,features,y,x)[0])
-        future=float(exact(times,prices,[origin+horizon_minutes])[0])
-        current=float(exact(times,prices,[origin])[0])
-        if not math.isfinite(future) or not math.isfinite(current): continue
-        actual=future/current-1.0
-        signal=('Buy' if approved and final_prediction>0 else
-                'Sell' if approved and final_prediction<0 else 'Wait')
-        predictions.append(dict(origin_minute=origin,target_minute=origin+horizon_minutes,
-            origin_price=current,actual_price=future,predicted_return=final_prediction,
-            raw_return=final_prediction,actual_return=actual,
-            predicted_price=current*(1.0+final_prediction),signal=signal,
-            model_id=model_family,model_family=model_family,validation_mae=validation_mae,
-            validation_baseline_mae=baseline,approved=approved))
-    actuals=[p['actual_return'] for p in predictions]
-    errors=[p['actual_return']-p['predicted_return'] for p in predictions]
-    directional=[(p['predicted_return']>=0)==(p['actual_return']>=0) for p in predictions]
-    return dict(status='completed' if predictions else 'insufficient_history',
-        config=dict(style=style,window_minutes=window_minutes,horizon_minutes=horizon_minutes,
-            model_family=model_family,
-            evaluation_start_minute=(int(evaluation_start_minute) if evaluation_start_minute is not None else None),
+        end = int(np.searchsorted(times, origin, side='right'))
+        train_t, train_p = times[:end], prices[:end]
+        if len(train_t) < min_train_rows:
+            continue
+
+        # The expensive time-series preparation and feature extraction are
+        # independent of model family, so do them once for all six competitors.
+        prepared = prepare_series(train_t, train_p)
+        x, valid = feature_matrix(train_t, train_p, [origin], window_minutes, prepared)
+        if not bool(valid[0]):
+            continue
+
+        stride_origins = train_t[train_t % stride == 0]
+        features, feature_ok = feature_matrix(
+            train_t, train_p, stride_origins, window_minutes, prepared
+        )
+        targets = exact(train_t, train_p, stride_origins + horizon_minutes)
+        current_prices = exact(train_t, train_p, stride_origins)
+        matured = feature_ok & np.isfinite(targets) & np.isfinite(current_prices) & (current_prices > 0)
+        origins = stride_origins[matured]
+        features = features[matured]
+        if len(origins) < 240:
+            continue
+
+        y = targets[matured] / current_prices[matured] - 1.0
+        boundary = origins[int(len(origins) * .75)]
+        fit_mask = origins + horizon_minutes < boundary
+        val_mask = origins >= boundary
+        if fit_mask.sum() < 100 or val_mask.sum() < 30:
+            continue
+
+        future = float(exact(times, prices, [origin + horizon_minutes])[0])
+        current = float(exact(times, prices, [origin])[0])
+        if not math.isfinite(future) or not math.isfinite(current) or current <= 0:
+            continue
+
+        folds.append(dict(
+            origin=origin,
+            x_eval=x,
+            x_fit=features[fit_mask],
+            y_fit=y[fit_mask],
+            x_validation=features[val_mask],
+            y_validation=y[val_mask],
+            x_full=features,
+            y_full=y,
+            current=current,
+            future=future,
+            actual=future / current - 1.0,
+        ))
+    return folds
+
+
+def _result_from_folds(folds, *, family, window_minutes, horizon_minutes,
+                       evaluation_start_minute):
+    predictions = []
+    for fold in folds:
+        val_pred = _family_predict(
+            family, fold['x_fit'], fold['y_fit'], fold['x_validation']
+        )
+        validation_mae = float(np.mean(np.abs(fold['y_validation'] - val_pred)))
+        baseline = float(np.mean(np.abs(fold['y_validation'])))
+        approved = bool(baseline > 0 and validation_mae < baseline * .98)
+        final_prediction = float(_family_predict(
+            family, fold['x_full'], fold['y_full'], fold['x_eval']
+        )[0])
+        signal = ('Buy' if approved and final_prediction > 0 else
+                  'Sell' if approved and final_prediction < 0 else 'Wait')
+        predictions.append(dict(
+            origin_minute=fold['origin'],
+            target_minute=fold['origin'] + horizon_minutes,
+            origin_price=fold['current'],
+            actual_price=fold['future'],
+            predicted_return=final_prediction,
+            raw_return=final_prediction,
+            actual_return=fold['actual'],
+            predicted_price=fold['current'] * (1.0 + final_prediction),
+            signal=signal,
+            model_id=family,
+            model_family=family,
+            validation_mae=validation_mae,
+            validation_baseline_mae=baseline,
+            approved=approved,
+        ))
+
+    actuals = [p['actual_return'] for p in predictions]
+    errors = [p['actual_return'] - p['predicted_return'] for p in predictions]
+    directional = [
+        (p['predicted_return'] >= 0) == (p['actual_return'] >= 0)
+        for p in predictions
+    ]
+    return dict(
+        status='completed' if predictions else 'insufficient_history',
+        config=dict(
+            style='short',
+            window_minutes=window_minutes,
+            horizon_minutes=horizon_minutes,
+            model_family=family,
+            evaluation_start_minute=(
+                int(evaluation_start_minute) if evaluation_start_minute is not None else None
+            ),
             evaluation_method='walk_forward_prediction_vs_actual_price',
-            signal_rule='forecast_direction_only; no trading-cost threshold'),
-        metrics=dict(folds=len(predictions),prediction_error=_metrics(errors),
-            actual_return=_metrics(actuals),directional_accuracy=(float(np.mean(directional)) if directional else None),
-            directionally_correct=int(sum(directional)),directionally_incorrect=int(len(directional)-sum(directional))),
-        predictions=predictions)
+            signal_rule='forecast_direction_only; no trading-cost threshold',
+        ),
+        metrics=dict(
+            folds=len(predictions),
+            prediction_error=_metrics(errors),
+            actual_return=_metrics(actuals),
+            directional_accuracy=(float(np.mean(directional)) if directional else None),
+            directionally_correct=int(sum(directional)),
+            directionally_incorrect=int(len(directional) - sum(directional)),
+        ),
+        predictions=predictions,
+    )
+
+
+def run_backtest_competition(times, prices, *, window_minutes: int, horizon_minutes: int,
+                             style='short', max_folds=120, min_train_rows=200,
+                             model_families=MODEL_FAMILIES, evaluation_start_minute=None):
+    """Evaluate model families on shared, precomputed walk-forward feature folds."""
+    times, prices = validate_series(times, prices)
+    families = tuple(model_families)
+    if (style != 'short' or window_minutes < 15 or horizon_minutes < 15
+            or not families or any(family not in MODEL_FAMILIES for family in families)):
+        raise ValueError('Invalid model style, window, horizon or model family')
+    if max_folds < 1 or min_train_rows < 1:
+        raise ValueError('Invalid fold or training-row limit')
+
+    folds = _prepare_backtest_folds(
+        times, prices,
+        window_minutes=window_minutes,
+        horizon_minutes=horizon_minutes,
+        evaluation_start_minute=evaluation_start_minute,
+        max_folds=max_folds,
+        min_train_rows=min_train_rows,
+    )
+    return {
+        family: _result_from_folds(
+            folds,
+            family=family,
+            window_minutes=window_minutes,
+            horizon_minutes=horizon_minutes,
+            evaluation_start_minute=evaluation_start_minute,
+        )
+        for family in families
+    }
+
+
+def run_backtest(times, prices, *, window_minutes: int, horizon_minutes: int, style='short',
+                 max_folds=120, min_train_rows=200, model_family='ridge',
+                 evaluation_start_minute=None):
+    """Backward-compatible single-family entry point."""
+    return run_backtest_competition(
+        times, prices,
+        window_minutes=window_minutes,
+        horizon_minutes=horizon_minutes,
+        style=style,
+        max_folds=max_folds,
+        min_train_rows=min_train_rows,
+        model_families=(model_family,),
+        evaluation_start_minute=evaluation_start_minute,
+    )[model_family]
+
 
 def calibration_from_backtest(predictions,*,minimum_samples=30):
     if len(predictions)<minimum_samples:
