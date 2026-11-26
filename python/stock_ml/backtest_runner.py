@@ -140,7 +140,7 @@ def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds):
                 competition = run_strategy_competition(
                     strategy_times, prices, horizon_steps=horizon_minutes,
                     bar_seconds=60, fee_bps=10, slippage_bps=5,
-                    minimum_net_return=0.002, max_drawdown=0.15,
+                    minimum_net_return=0.0, max_drawdown=0.15,
                     evaluation_start=strategy_start)
                 for strategy_name, item in competition['strategies'].items():
                     if strategy_name.startswith('baseline_'):
@@ -151,7 +151,7 @@ def process(project,dsn,stock_ids,lookback_days,evaluation_days,max_folds):
                     config = dict(style='short', window_minutes=lookback_days * 1440,
                         horizon_minutes=horizon_minutes, strategy_family=strategy_name,
                         model_family='technical_strategy', fee_bps=10,
-                        slippage_bps=5, minimum_net_return=0.002,
+                        slippage_bps=5, minimum_net_return=0.0,
                         execution=competition['config']['execution'],
                         current_market_regime=competition.get('config', {}).get('current_market_regime'),
                         best_strategy_for_current_regime=competition.get('best_strategy_for_current_regime'),
