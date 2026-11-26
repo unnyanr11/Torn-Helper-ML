@@ -39,8 +39,8 @@ class BacktestTests(unittest.TestCase):
                 times,prices,window_minutes=60,horizon_minutes=15,max_folds=3,
                 min_train_rows=200,model_families=('ridge','elastic_net'),
             )
-            # Feature preparation occurs once per eligible fold, not once per family.
-            self.assertEqual(prepare.call_count,3)
+            # The full causal feature matrix is built once and reused by all folds.
+            self.assertEqual(prepare.call_count,1)
 
         for family in ('ridge','elastic_net'):
             individual=run_backtest(
