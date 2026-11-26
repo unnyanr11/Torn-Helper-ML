@@ -8,9 +8,6 @@ from psycopg.types.json import Jsonb
 LOOKBACK_HOURS = 8
 MIN_SAMPLES = 30
 MIN_IMPROVEMENT = 0.02
-MIN_TRADES = 5
-MAX_DRAWDOWN = 0.15
-MIN_PROFIT_FACTOR = 1.0
 
 
 def rank_rows(rows):
@@ -26,18 +23,13 @@ def rank_rows(rows):
             continue
         mae=float(mae); baseline=float(baseline_mae)
         improvement=(baseline-mae)/baseline if baseline>0 else None
-        total_return=float(total_return) if total_return is not None else None
-        trades=int(trades or 0)
-        max_drawdown=float(max_drawdown) if max_drawdown is not None else None
-        profit_factor=float(profit_factor) if profit_factor is not None else None
-        drawdown_abs=abs(max_drawdown) if max_drawdown is not None else None
-        risk_adjusted_score=(total_return/max(drawdown_abs,0.01)
-                             if total_return is not None and drawdown_abs is not None else None)
+        total_return=None
+        trades=0
+        max_drawdown=None
+        profit_factor=None
+        risk_adjusted_score=improvement
         eligible=(samples>=MIN_SAMPLES and improvement is not None
-                  and improvement>=MIN_IMPROVEMENT and trades>=MIN_TRADES
-                  and total_return is not None and total_return>0
-                  and drawdown_abs is not None and drawdown_abs<=MAX_DRAWDOWN
-                  and profit_factor is not None and profit_factor>MIN_PROFIT_FACTOR)
+                  and improvement>=MIN_IMPROVEMENT)
         evaluated.append(dict(
             stock_id=int(stock_id),style=style,window_minutes=int(window_minutes),
             horizon_minutes=int(horizon_minutes),model_family=model_family,
@@ -51,10 +43,7 @@ def rank_rows(rows):
             max_drawdown=max_drawdown,profit_factor=profit_factor,
             risk_adjusted_score=risk_adjusted_score,eligible=eligible))
     def quality_key(item):
-        return (not item['eligible'],
-                -(item['risk_adjusted_score'] if item['risk_adjusted_score'] is not None else -1e9),
-                -(item['profit_factor'] if item['profit_factor'] is not None else -1e9),
-                -(item['mae_improvement_pct'] or -1e9),
+        return (not item['eligible'], item['mae'],
                 -(item['directional_accuracy'] or 0), item['rmse'])
     evaluated.sort(key=lambda x: (
         x['stock_id'], x['style'], x['window_minutes'], x['horizon_minutes'],
@@ -71,9 +60,7 @@ def rank_rows(rows):
     return dict(
         lookback_hours=LOOKBACK_HOURS, minimum_samples=MIN_SAMPLES,
         minimum_mae_improvement_pct=MIN_IMPROVEMENT*100,
-        minimum_trades=MIN_TRADES,maximum_drawdown_pct=MAX_DRAWDOWN*100,
-        minimum_profit_factor=MIN_PROFIT_FACTOR,
-        ranking_method='net_return_divided_by_max(absolute_drawdown, 1%) after eligibility filters',
+        ranking_method='lowest out-of-sample MAE after at least 2% improvement over the no-change baseline; directional accuracy breaks ties',
         evaluated_runs=len(evaluated), eligible_runs=len(eligible),
         rejected_runs=len(evaluated)-len(eligible),
         best_model_by_stock=list(best_by_stock.values()),

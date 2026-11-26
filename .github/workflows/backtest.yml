@@ -129,7 +129,7 @@ jobs:
           EVALUATION_DAYS: ${{ github.event.inputs.evaluation_days || '0' }}
           MAX_FOLDS: ${{ github.event.inputs.max_folds || '30' }}
           BACKTEST_WORKERS: ${{ github.event.inputs.backtest_workers || '2' }}
-          ALLOW_CALIBRATION_PROMOTION: "true"
+          ALLOW_CALIBRATION_PROMOTION: "false"
           GITHUB_SHA: ${{ github.sha }}
         run: python python/stock_ml/backtest_runner.py
 
@@ -150,7 +150,13 @@ jobs:
           cache-dependency-path: python/stock_ml/requirements.txt
       - name: Install dependencies
         run: python -m pip install -r python/stock_ml/requirements.txt
-      - name: Build per-shard model rankings
+      - name: Publish best backtested model and calibration per selector
+        env:
+          STOCK_ML_PROJECTS_JSON: ${{ secrets.STOCK_ML_PROJECTS_JSON }}
+          LOOKBACK_DAYS: ${{ github.event.inputs.lookback_days || '180' }}
+          BACKTEST_PUBLISH_WINDOW_HOURS: "8"
+        run: python python/stock_ml/backtest_publish.py
+      - name: Build accuracy-only model rankings
         env:
           STOCK_ML_PROJECTS_JSON: ${{ secrets.STOCK_ML_PROJECTS_JSON }}
         run: python python/stock_ml/backtest_reporting.py

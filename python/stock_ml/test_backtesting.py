@@ -1,8 +1,9 @@
 import unittest
 import numpy as np
 from backtesting import run_backtest, calibration_from_backtest, MODEL_FAMILIES, _family_predict
-from realtime_model import train_range, RIDGE_ALPHAS, COMBINATIONS
+from realtime_model import train_range, RIDGE_ALPHAS, COMBINATIONS, feature_matrix, infer_exported
 from backtest_runner import _align_model_results
+from backtesting import fit_live_model
 
 class BacktestTests(unittest.TestCase):
     def test_model_family_matrix_includes_baselines_trees_and_ensemble(self):
@@ -81,6 +82,21 @@ class BacktestTests(unittest.TestCase):
         result=calibration_from_backtest(rows)
         self.assertTrue(result['active'])
         self.assertGreater(result['holdout_mae_raw'],result['holdout_mae_corrected'])
+
+    def test_exported_live_models_support_every_backtest_family(self):
+        rng=np.random.default_rng(91)
+        times=np.arange(0,9000,dtype=np.int64)
+        prices=100*np.exp(np.cumsum(rng.normal(0.00001,0.0003,len(times))))
+        origin=int(times[-1])
+        x,valid=feature_matrix(times,prices,[origin],60)
+        self.assertTrue(bool(valid[0]))
+        for family in MODEL_FAMILIES:
+            model=fit_live_model(times,prices,window_minutes=60,horizon_minutes=15,
+                                 model_family=family)
+            self.assertEqual(model['status'],'ready')
+            self.assertEqual(model['model_family'],family)
+            prediction=infer_exported(model['parameters'],x[0])
+            self.assertTrue(np.isfinite(prediction),family)
 
     def test_nested_model_selection_uses_supported_alpha(self):
         rng=np.random.default_rng(7)
