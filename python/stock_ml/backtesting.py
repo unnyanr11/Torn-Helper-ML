@@ -125,12 +125,10 @@ def _prepare_backtest_folds(times, prices, *, window_minutes, horizon_minutes,
             continue
 
         origins = all_origins[row_indices]
-        features = features_all[row_indices]
-        y = returns_all[row_indices]
         boundary = origins[int(len(origins) * .75)]
-        fit_mask = origins + horizon_minutes < boundary
-        val_mask = origins >= boundary
-        if fit_mask.sum() < 100 or val_mask.sum() < 30:
+        fit_indices = row_indices[origins + horizon_minutes < boundary]
+        validation_indices = row_indices[origins >= boundary]
+        if len(fit_indices) < 100 or len(validation_indices) < 30:
             continue
 
         # These values were already obtained in the vectorized exact-price pass.
@@ -139,15 +137,16 @@ def _prepare_backtest_folds(times, prices, *, window_minutes, horizon_minutes,
         if not math.isfinite(future) or not math.isfinite(current) or current <= 0:
             continue
 
+        # Retain shared feature arrays and compact row indices. Materialize
+        # each fold's design matrices only when it is being fitted.
         folds.append(dict(
             origin=origin,
-            x_eval=features_all[origin_index:origin_index + 1],
-            x_fit=features[fit_mask],
-            y_fit=y[fit_mask],
-            x_validation=features[val_mask],
-            y_validation=y[val_mask],
-            x_full=features,
-            y_full=y,
+            features_all=features_all,
+            returns_all=returns_all,
+            fit_indices=fit_indices,
+            validation_indices=validation_indices,
+            full_indices=row_indices,
+            eval_index=origin_index,
             current=current,
             future=future,
             actual=future / current - 1.0,
@@ -162,16 +161,25 @@ def _results_from_folds(folds, *, families, window_minutes, horizon_minutes,
     predictions_by_family = {family: [] for family in families}
 
     for fold in folds:
+        features = fold['features_all']
+        returns = fold['returns_all']
+        fit_indices = fold['fit_indices']
+        validation_indices = fold['validation_indices']
+        full_indices = fold['full_indices']
+        x_fit = features[fit_indices]
+        y_fit = returns[fit_indices]
+        x_validation = features[validation_indices]
+        y_validation = returns[validation_indices]
+        x_full = features[full_indices]
+        y_full = returns[full_indices]
+        x_eval = features[fold['eval_index']:fold['eval_index'] + 1]
+
         validation_predictions = {
-            family: _fit_predict(
-                family, fold['x_fit'], fold['y_fit'], fold['x_validation']
-            )
+            family: _fit_predict(family, x_fit, y_fit, x_validation)
             for family in fit_families
         }
         final_predictions = {
-            family: _fit_predict(
-                family, fold['x_full'], fold['y_full'], fold['x_eval']
-            )
+            family: _fit_predict(family, x_full, y_full, x_eval)
             for family in fit_families
         }
 
@@ -183,10 +191,10 @@ def _results_from_folds(folds, *, families, window_minutes, horizon_minutes,
                 np.vstack([final_predictions[name] for name in BASE_FAMILIES]), axis=0
             )
 
-        baseline = float(np.mean(np.abs(fold['y_validation'])))
+        baseline = float(np.mean(np.abs(y_validation)))
         for family in families:
             val_pred = validation_predictions[family]
-            validation_mae = float(np.mean(np.abs(fold['y_validation'] - val_pred)))
+            validation_mae = float(np.mean(np.abs(y_validation - val_pred)))
             approved = bool(baseline > 0 and validation_mae < baseline * .98)
             final_prediction = float(final_predictions[family][0])
             signal = ('Buy' if approved and final_prediction > 0 else
