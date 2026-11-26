@@ -1,6 +1,7 @@
 """Leakage-safe walk-forward comparison of forecasting model families."""
 from __future__ import annotations
 import math
+import time
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import Ridge, ElasticNet
@@ -322,7 +323,7 @@ def export_estimator(estimator, family):
     raise ValueError("Unsupported exported model family: "+str(family))
 
 
-def fit_live_model(times, prices, *, window_minutes, horizon_minutes, model_family, observed_mask=None, prepared=None, max_training_rows=None, feature_data=None):
+def fit_live_model(times, prices, *, window_minutes, horizon_minutes, model_family, observed_mask=None, prepared=None, max_training_rows=None, feature_data=None, fit_profile=None):
     """Fit the selected winner on matured genuine observations.
 
     Optional prepared features and row caps let the read-only benchmark exercise
@@ -384,7 +385,10 @@ def fit_live_model(times, prices, *, window_minutes, horizon_minutes, model_fami
             estimator=HistGradientBoostingRegressor(max_iter=80,max_leaf_nodes=7,l2_regularization=2.0,learning_rate=.05,random_state=17)
         else:
             raise ValueError("Unknown model family: "+str(family))
+        fit_started=time.perf_counter() if fit_profile is not None else None
         estimator.fit(design,target)
+        if fit_profile is not None:
+            fit_profile[family]=fit_profile.get(family,0.0)+(time.perf_counter()-fit_started)
         return estimator
     if model_family=="ensemble":
         members={name:fit_family(name,x,y) for name in BASE_FAMILIES}
