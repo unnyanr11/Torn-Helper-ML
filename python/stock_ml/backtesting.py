@@ -322,7 +322,7 @@ def export_estimator(estimator, family):
     raise ValueError("Unsupported exported model family: "+str(family))
 
 
-def fit_live_model(times, prices, *, window_minutes, horizon_minutes, model_family):
+def fit_live_model(times, prices, *, window_minutes, horizon_minutes, model_family, observed_mask=None):
     """Fit the selected backtest winner on all matured, genuine observations."""
     from sklearn.linear_model import Ridge, ElasticNet
     from sklearn.preprocessing import StandardScaler
@@ -332,10 +332,21 @@ def fit_live_model(times, prices, *, window_minutes, horizon_minutes, model_fami
     times,prices=validate_series(times,prices)
     prepared=prepare_series(times,prices)
     origins=times[times%15==0]
+    if observed_mask is not None:
+        observed_mask=np.asarray(observed_mask,dtype=bool)
+        if len(observed_mask)!=len(times):
+            raise ValueError("Observed-price mask must match the minute series")
+        origins=origins[observed_mask[np.searchsorted(times,origins)]]
     features,valid=feature_matrix(times,prices,origins,window_minutes,prepared)
     targets=exact(times,prices,origins+horizon_minutes)
     current=exact(times,prices,origins)
     valid &= np.isfinite(targets) & np.isfinite(current) & (current>0)
+    if observed_mask is not None:
+        target_idx=np.searchsorted(times,origins+horizon_minutes)
+        target_exists=target_idx<len(times)
+        target_real=np.zeros(len(target_idx),dtype=bool)
+        target_real[target_exists]=observed_mask[target_idx[target_exists]]
+        valid &= target_real
     x=features[valid]; y=targets[valid]/current[valid]-1.0
     if len(y)<240:
         raise ValueError("Insufficient matured observations to fit the selected model")
