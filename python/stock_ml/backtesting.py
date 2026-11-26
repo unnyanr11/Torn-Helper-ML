@@ -48,7 +48,8 @@ def _metrics(values):
                 rmse=float(np.sqrt(np.mean(a*a))))
 
 def _prepare_backtest_folds(times, prices, *, window_minutes, horizon_minutes,
-                            evaluation_start_minute, max_folds, min_train_rows):
+                            evaluation_start_minute, max_folds, min_train_rows,
+                            prepared=None, feature_cache=None):
     """Build leakage-safe folds from one causal feature pass over the stock history.
 
     Feature rows at an origin only use observations at or before that origin.
@@ -56,16 +57,24 @@ def _prepare_backtest_folds(times, prices, *, window_minutes, horizon_minutes,
     prefix-only implementation and preventing future-label leakage.
     """
     stride = 15
-    prepared = prepare_series(times, prices)
+    prepared = prepared if prepared is not None else prepare_series(times, prices)
     all_origins = times[times % stride == 0]
     if not len(all_origins):
         return []
 
     # This is the expensive operation: calculate each window's features once,
     # rather than once for every walk-forward fold.
-    features_all, feature_ok_all = feature_matrix(
-        times, prices, all_origins, window_minutes, prepared
-    )
+    cached = feature_cache.get(window_minutes) if feature_cache is not None else None
+    if cached is not None:
+        cached_origins, features_all, feature_ok_all = cached
+        if not np.array_equal(cached_origins, all_origins):
+            raise ValueError('Cached backtest features do not match this stock history')
+    else:
+        features_all, feature_ok_all = feature_matrix(
+            times, prices, all_origins, window_minutes, prepared
+        )
+        if feature_cache is not None:
+            feature_cache[window_minutes] = (all_origins, features_all, feature_ok_all)
     targets_all = exact(times, prices, all_origins + horizon_minutes)
     current_all = exact(times, prices, all_origins)
     matured_all = (
@@ -233,7 +242,8 @@ def _results_from_folds(folds, *, families, window_minutes, horizon_minutes,
 
 def run_backtest_competition(times, prices, *, window_minutes: int, horizon_minutes: int,
                              style='short', max_folds=120, min_train_rows=200,
-                             model_families=MODEL_FAMILIES, evaluation_start_minute=None):
+                             model_families=MODEL_FAMILIES, evaluation_start_minute=None,
+                             prepared=None, feature_cache=None):
     """Evaluate model families on shared, precomputed walk-forward feature folds."""
     times, prices = validate_series(times, prices)
     families = tuple(model_families)
@@ -250,6 +260,8 @@ def run_backtest_competition(times, prices, *, window_minutes: int, horizon_minu
         evaluation_start_minute=evaluation_start_minute,
         max_folds=max_folds,
         min_train_rows=min_train_rows,
+        prepared=prepared,
+        feature_cache=feature_cache,
     )
     return _results_from_folds(
         folds,
