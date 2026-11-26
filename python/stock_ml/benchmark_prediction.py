@@ -143,10 +143,10 @@ def main():
     if path:
         with open(path, "a", encoding="utf-8") as out:
             out.write("# Six-stock Python prediction benchmark\n\n")
-            out.write("| Stock | Algorithm | Predictions | Skipped | Fit seconds | Inference seconds | Total seconds |\n|---:|---|---:|---:|---:|---:|---:|\n")
+            out.write("| Stock | Algorithm | Predictions | Skipped | Feature builds | Fit seconds | Inference seconds | Total seconds |\n|---:|---|---:|---:|---:|---:|---:|---:|\n")
             for r in results:
                 out.write(f"| {r['stock_id']} | {r['algorithm_id']} — {r['model_family']} | {r['selectors_predicted']}/{r['selectors_total']} | {r['selectors_skipped']} | {r['feature_matrix_builds']} | {r['fit_seconds']:.3f} | {r['inference_seconds']:.3f} | {r['stock_total_seconds']:.3f} |\n")
-            out.write(f"\n**Worker processes:** {workers}\n\n**Total wall-clock:** {elapsed:.3f} seconds\n\n**Completed stocks:** {len(results)}/6\n")
+            out.write(f"\n**Worker processes:** {workers}\n\n**Feature matrix builds:** {summary['feature_matrix_builds']}\n\n**Total wall-clock:** {elapsed:.3f} seconds\n\n**Completed stocks:** {len(results)}/6\n")
             if failures:
                 out.write("\n## Failures\n")
                 for f in failures:
